@@ -6,6 +6,20 @@ const phraseTypes = {
   COMPONENT: "component",
 };
 
+const INVALID_ARRAY_ITEM =
+  "Each element in an array must be wrapped in html(key)`...`";
+const MISSING_ARRAY_ITEM_KEY =
+  "Each element in an array must have a key. Pass one like this: html(key)`...`";
+
+// TODO
+function debug(...msg) {
+  console.log(...msg);
+}
+
+function isTemplate(value) {
+  return value && value._isTemplateNode;
+}
+
 function isPrimitive(value) {
   return (
     value === null ||
@@ -14,6 +28,17 @@ function isPrimitive(value) {
     typeof value === "boolean" ||
     typeof value === "number"
   );
+}
+
+function canRenderPrimitive(value) {
+  return typeof value === "string" || typeof value === "number";
+}
+
+function isTemplateMatch(a, b) {
+  if (!a.hash && !b.hash) {
+    return a === b;
+  }
+  return a.hash === b.hash;
 }
 
 function isMergeable(phrase) {
@@ -43,7 +68,10 @@ function html(htmlStringsOrConfig, ...interpolations) {
   if (Array.isArray(htmlStringsOrConfig)) {
     const strings = htmlStringsOrConfig;
     return getTemplateBuilder(undefined, strings, ...interpolations)();
-  } else if (typeof htmlStringsOrConfig === "string") {
+  } else if (
+    typeof htmlStringsOrConfig === "string" ||
+    typeof htmlStringsOrConfig === "number"
+  ) {
     const key = htmlStringsOrConfig;
     return getTemplateBuilder(key);
   } else {
@@ -52,13 +80,14 @@ function html(htmlStringsOrConfig, ...interpolations) {
   }
 }
 
+// TODO: figure out how to make templates cacheable
 function getTemplateBuilder(key, defaultHtmlStrings, ...defaultInterpolations) {
   return (htmlStrings, ...interpolations) => {
     const htmlStringsWithDefaults = [...(htmlStrings || defaultHtmlStrings)];
 
     return {
       _isTemplateNode: true,
-      assignedkey: key,
+      assignedkey: "i_" + key,
       // NOTE: when determining dom changes object equality can be used instead
       // of a hash for templates created when parsing component children
       hash: htmlStringsWithDefaults.join("_"),
@@ -76,6 +105,8 @@ function getTemplateBuilder(key, defaultHtmlStrings, ...defaultInterpolations) {
   };
 }
 
+// TODO: trim inter-element whitespace
+
 // TODO: more work here and in a renderToString to make sure components are
 // passed around properly
 function parseTemplateInPlace(template) {
@@ -83,6 +114,7 @@ function parseTemplateInPlace(template) {
   let isClosingTag = false;
   let isComponentTag = false;
   let isAttr = false;
+  let suffix = 0;
 
   const templateStack = [template];
 
@@ -151,7 +183,9 @@ function parseTemplateInPlace(template) {
 
           if (/[A-Z]/.test(unparsedFragment[controlCharsIndex + 1])) {
             isComponentTag = true;
-            getIdentifiers().push(Symbol());
+            getIdentifiers().push({ suffix });
+            suffix++;
+
             pushPhrase({
               type: phraseTypes.IDENTIFIER,
               index: getIdentifiers().length - 1,
@@ -240,6 +274,7 @@ function parseTemplateInPlace(template) {
         // Handle tag end
         case ">":
           if (!isComponentTag) {
+            // TODO: handle self closing tags
             pushPhrase({
               type: phraseTypes.HTML,
               value: unparsedFragment.slice(0, controlCharsIndex + 1),
@@ -307,7 +342,9 @@ function parseTemplateInPlace(template) {
       !isClosingTag &&
       i !== template.htmlStrings.length - 1
     ) {
-      getIdentifiers().push(Symbol());
+      getIdentifiers().push({ suffix });
+      suffix++;
+
       pushPhrase({
         type: phraseTypes.IDENTIFIER,
         index: getIdentifiers().length - 1,
@@ -330,7 +367,9 @@ function parseTemplateInPlace(template) {
         !phrases[tagStart - 1] ||
         phrases[tagStart - 1].type !== phraseTypes.IDENTIFIER
       ) {
-        getIdentifiers().push(Symbol());
+        getIdentifiers().push({ suffix });
+        suffix++;
+
         phrases.splice(tagStart, 0, {
           type: phraseTypes.IDENTIFIER,
           index: getIdentifiers().length - 1,
@@ -357,6 +396,7 @@ function parseTemplateInPlace(template) {
         });
       } else {
         templateStack.at(-1).attributes.push({
+          name: attrName,
           interpolationIndex: i,
           identifierIndex: getIdentifiers().length - 1,
         });
@@ -372,17 +412,27 @@ function parseTemplateInPlace(template) {
   template.parsedHtmlPhrases = mergePhrases(template.parsedHtmlPhrases);
 }
 
+let currentKey;
+let templatesByKey = {};
 let propsByKey = {};
+let componentsByKey = {};
 
 function renderToString(key, node, result = { html: "", listenersByKey: {} }) {
-  const template = node._isTemplateNode ? node : node(propsByKey[key] || {});
+  currentKey = key;
+
+  let template;
+  if (isTemplate(node)) {
+    template = node;
+  } else {
+    componentsByKey[key] = node;
+    template = node(propsByKey[key] || {});
+  }
 
   if (isPrimitive(template)) {
     // TODO: primitives need to be escaped at some point
-    if (typeof template === "string" || typeof template === "number") {
+    if (canRenderPrimitive(template)) {
       result.html += template;
     }
-
     return result;
   }
 
@@ -390,22 +440,21 @@ function renderToString(key, node, result = { html: "", listenersByKey: {} }) {
     parseTemplateInPlace(template);
   }
 
-  let suffix = 0;
-  const keysByIdentifier = {};
+  template.components ||= node.components;
+  templatesByKey[key] = template;
 
   template.parsedHtmlPhrases.forEach((phrase, i) => {
     const prevPhrase = template.parsedHtmlPhrases[i - 1];
     const activeKey =
       prevPhrase?.type === phraseTypes.IDENTIFIER &&
-      keysByIdentifier[template.identifiers[prevPhrase.index]];
+      key + "." + template.identifiers[prevPhrase.index].suffix;
 
     switch (phrase.type) {
       case phraseTypes.IDENTIFIER:
         {
-          const identifier = template.identifiers[phrase.index];
-          const identiferKey = (keysByIdentifier[identifier] ||=
-            key + " " + suffix++);
-          result.html += `<!-- ${identiferKey} -->`;
+          result.html += `<!-- ${
+            key + "." + template.identifiers[phrase.index].suffix
+          } -->`;
         }
         break;
       case phraseTypes.HTML:
@@ -422,41 +471,35 @@ function renderToString(key, node, result = { html: "", listenersByKey: {} }) {
         break;
       case phraseTypes.SLOT:
         {
-          const interpolation =
+          const value =
             template.interpolations[
               template.slots[phrase.index].interpolationIndex
             ];
-          const value =
-            typeof interpolation === "function"
-              ? interpolation()
-              : interpolation;
 
-          if (typeof value === "number" || typeof value === "string") {
-            // TODO: you also need to escape this
-            result.html += value;
-          } else if (typeof value === undefined || typeof value === null) {
-            break;
+          if (isPrimitive(value)) {
+            if (canRenderPrimitive(value)) {
+              // TODO: you also need to escape this
+              result.html += value;
+            }
+          } else if (isTemplate(value)) {
+            renderToString(activeKey, value, result);
           } else if (Array.isArray(value)) {
-            if (!value.every((item) => item._isTemplateNode)) {
-              throw new Error(
-                "Each element in an array must be wrapped in html(key)`...`",
-              );
+            if (!value.every(isTemplate)) {
+              throw new Error(INVALID_ARRAY_ITEM);
             }
 
             if (!value.every((item) => item.assignedkey)) {
-              throw new Error(
-                "Each element in an array must have a key. Pass one like this: html(key)`...`",
-              );
+              throw new Error(MISSING_ARRAY_ITEM_KEY);
             }
 
             value.forEach((item) => {
-              const itemKey = activeKey + " " + item.assignedkey;
+              item.components ||= template.components;
+              const itemKey = activeKey + "." + item.assignedkey;
+
               result.html += `<!-- ${itemKey} -->`;
               renderToString(itemKey, item, result);
               result.html += `<!-- ${itemKey} -->`;
             });
-          } else if (typeof value === "object" && value._isTemplateNode) {
-            renderToString(activeKey, value, result);
           }
         }
         break;
@@ -496,11 +539,11 @@ function renderToString(key, node, result = { html: "", listenersByKey: {} }) {
 
   // Keep track of listeners so they can be attached after the dom is updated
   template.listeners.forEach((listener) => {
-    const identifier = template.identifiers[listener.identifierIndex];
-    const key = keysByIdentifier[identifier];
+    const listenerKey =
+      key + "." + template.identifiers[listener.identifierIndex].suffix;
 
-    result.listenersByKey[key.toLowerCase()] ||= [];
-    result.listenersByKey[key.toLowerCase()].push({
+    result.listenersByKey[listenerKey] ||= [];
+    result.listenersByKey[listenerKey].push({
       event: listener.event,
       handler: template.interpolations[listener.interpolationIndex],
     });
@@ -511,20 +554,350 @@ function renderToString(key, node, result = { html: "", listenersByKey: {} }) {
 
 const elementsByKey = {};
 
-function hydrate({ listenersByKey }) {
-  Object.entries(listenersByKey).forEach(([key, handlers]) => {
-    handlers.forEach(({ event, handler }) => {
-      const element = (elementsByKey[key] ||= document.evaluate(
-        `//comment()[contains(string(), " ${key} ")]`,
-        document,
-        null,
-        XPathResult.FIRST_ORDERED_NODE_TYPE,
-      ).singleNodeValue?.nextSibling);
+function getElementByKey(key) {
+  return (elementsByKey[key] ||= document.evaluate(
+    `//comment()[contains(string(), " ${key} ")]`,
+    document,
+    null,
+    XPathResult.FIRST_ORDERED_NODE_TYPE,
+  ).singleNodeValue?.nextSibling);
+}
 
-      // TODO: remove these in the cleanup phase
-      element.addEventListener(event, handler);
-    });
+// TODO: you shouldn't call document.evaluate for each listener and it might be
+// better to attach listeners once you're done with other dom mutations
+// - you can prepend "evt " to keys with listeners and then query the document
+//   for all of those
+// - when attaching listeners for a template you might be able to query the
+//   document for just the keys belonging to the template
+
+function hydrate({ listenersByKey }) {
+  Object.entries(listenersByKey).forEach(([key, listeners]) =>
+    listeners.forEach(({ event, handler }) =>
+      getElementByKey(key).addEventListener(event, handler),
+    ),
+  );
+}
+
+/**
+ * - "set" replaces html between two keys,
+ * - "text" does the same thing for a text node
+ * - "overwrite" is like set but it writes over the matching start and end keys
+ *   as well
+ * - "append" inserts html after the second matching key
+ * - "insert" inserts html after the first matching key without replacing
+ *   anything
+ *
+ * @param {"set" | "text" | "overwrite" | "append" | "insert"} [mode="set"]
+ */
+function setHtml(key, html, mode = "set") {
+  debug("Setting html with mode", mode);
+
+  let result = document.evaluate(
+    `//comment()[contains(string(), " ${key} ")]`,
+    document,
+    null,
+    mode === "append"
+      ? XPathResult.ORDERED_NODE_ITERATOR_TYPE
+      : XPathResult.FIRST_ORDERED_NODE_TYPE,
+  );
+
+  const node =
+    mode === "append"
+      ? result.iterateNext() && result.iterateNext()
+      : result.singleNodeValue;
+
+  if (mode === "set" || mode === "text" || mode === "overwrite") {
+    while (
+      node.nextSibling &&
+      (node.nextSibling.nodeType !== Node.COMMENT_NODE ||
+        !node.nextSibling.nodeValue?.includes(` ${key} `))
+    ) {
+      node.nextSibling.remove();
+    }
+  }
+
+  let newNode;
+
+  if (mode === "text") {
+    newNode = document.createTextNode(html);
+  } else {
+    const template = document.createElement("template");
+    template.innerHTML = html;
+    newNode = template.content;
+  }
+
+  node.parentNode.insertBefore(newNode, node.nextSibling);
+
+  if (mode === "overwrite") {
+    node.nextSibling.remove();
+    node.remove();
+  }
+}
+
+function clearChildKeys(key, obj) {
+  Object.keys(obj).forEach((objKey) => {
+    if (objKey.startsWith(key)) {
+      delete obj[objKey];
+    }
   });
+}
+
+function clearTemplateCaches(key) {
+  clearChildKeys(key, templatesByKey);
+  clearChildKeys(key, propsByKey);
+  clearChildKeys(key, componentsByKey);
+  clearChildKeys(key, elementsByKey);
+}
+
+function render(key, node, depth = 0, domMutations = []) {
+  currentKey = key;
+
+  let template;
+  if (isTemplate(node)) {
+    template = node;
+  } else {
+    componentsByKey[key] = node;
+    template = node(propsByKey[key] || {});
+  }
+
+  if (isPrimitive(template)) {
+    domMutations.push(() =>
+      setHtml(key, canRenderPrimitive(template) ? template : "", "text"),
+    );
+    return;
+  }
+
+  if (!template.parsedHtmlPhrases.length) {
+    parseTemplateInPlace(template);
+  }
+
+  template.components ||= node.components;
+
+  if (!templatesByKey[key] || !isTemplateMatch(templatesByKey[key], template)) {
+    const result = renderToString(key, template);
+
+    domMutations.push(() => {
+      setHtml(key, result.html);
+      hydrate(result);
+    });
+
+    return;
+  }
+
+  template.slots.forEach((slot) => {
+    const slotKey =
+      key + "." + template.identifiers[slot.identifierIndex].suffix;
+    const value = template.interpolations[slot.interpolationIndex];
+    const prevValue =
+      templatesByKey[key].interpolations[slot.interpolationIndex];
+
+    if (isPrimitive(value)) {
+      if (prevValue !== value) {
+        clearTemplateCaches(slotKey);
+
+        domMutations.push(() =>
+          setHtml(slotKey, canRenderPrimitive(value) ? value : "", "text"),
+        );
+      }
+    } else if (
+      isTemplate(value) &&
+      (isPrimitive(prevValue) || !isTemplateMatch(prevValue, value))
+    ) {
+      render(slotKey, value, depth + 1, domMutations);
+    } else if (Array.isArray(value)) {
+      if (isTemplate(prevValue)) {
+        clearTemplateCaches(slotKey);
+      }
+
+      if (!value.every(isTemplate)) {
+        throw new Error(INVALID_ARRAY_ITEM);
+      }
+
+      if (!value.every((item) => item.assignedkey)) {
+        throw new Error(MISSING_ARRAY_ITEM_KEY);
+      }
+
+      let renderAll = false;
+      if (!Array.isArray(prevValue)) {
+        renderAll = true;
+      } else {
+        const withoutNew = value.filter((item) =>
+          prevValue.some(
+            (prevItem) => prevItem.assignedkey === item.assignedkey,
+          ),
+        );
+        const prevWithoutRemoved = prevValue.filter((prevItem) =>
+          value.some((item) => item.assignedkey === prevItem.assignedkey),
+        );
+        const orderChanged = !withoutNew.every(
+          (item, i) => prevWithoutRemoved[i].assignedkey === item.assignedkey,
+        );
+
+        orderChanged && debug("Array order changed");
+        renderAll = orderChanged;
+      }
+
+      if (renderAll) {
+        clearTemplateCaches(slotKey);
+        domMutations.push(() => setHtml(slotKey, ""));
+
+        value.toReversed().forEach((item) => {
+          item.components ||= template.components;
+
+          const itemKey = slotKey + "." + item.assignedkey;
+          const result = renderToString(itemKey, item);
+
+          domMutations.push(() => {
+            setHtml(
+              slotKey,
+              `<!-- ${itemKey} -->` + result.html + `<!-- ${itemKey} -->`,
+              "insert",
+            );
+            hydrate(result);
+          });
+        });
+      } else {
+        // Removed items
+        prevValue.forEach((prevItem) => {
+          if (
+            !value.some((item) => item.assignedkey === prevItem.assignedkey)
+          ) {
+            domMutations.push(() =>
+              setHtml(slotKey + "." + prevItem.assignedkey, "", "overwrite"),
+            );
+          }
+        });
+
+        // Added or changed items
+        value.toReversed().forEach((item, i, reversed) => {
+          const itemKey = slotKey + "." + item.assignedkey;
+          const prevItem = prevValue.find(
+            (prevItem) => prevItem.assignedkey === item.assignedkey,
+          );
+
+          if (!prevItem) {
+            item.components ||= template.components;
+            const result = renderToString(itemKey, item);
+            const anchor = reversed
+              .slice(i + 1)
+              .find((item) =>
+                prevValue.some(
+                  (prevItem) => prevItem.assignedkey === item.assignedkey,
+                ),
+              );
+
+            domMutations.push(() => {
+              const itemHtml = `<!-- ${itemKey} -->${result.html}<!-- ${itemKey} -->`;
+
+              if (anchor) {
+                setHtml(slotKey + "." + anchor.assignedkey, itemHtml, "append");
+              } else {
+                setHtml(slotKey, itemHtml, "insert");
+              }
+
+              hydrate(result);
+            });
+          } else if (item.hash !== prevItem.hash) {
+            render(itemKey, item, depth + 1, domMutations);
+          }
+        });
+      }
+    }
+  });
+
+  template.attributes.forEach((attr, i) => {
+    // TODO: you may need to escape this
+    const attrValue = template.interpolations[attr.interpolationIndex];
+    const prevAttrValue =
+      templatesByKey[key].interpolations[
+        templatesByKey[key].attributes[i].interpolationIndex
+      ];
+
+    if (prevAttrValue !== attrValue) {
+      domMutations.push(() => {
+        const element = getElementByKey(
+          key + "." + template.identifiers[attr.identifierIndex].suffix,
+        );
+
+        element.setAttribute(attr.name, attrValue);
+
+        if (
+          attr.name === "value" &&
+          element.tagName === "INPUT" &&
+          element.value !== attrValue
+        ) {
+          element.value = attrValue;
+        }
+      });
+    }
+  });
+
+  // TODO: special handling for functions that don't reference stale variables
+  // but are not themselves referencially stable?
+  template.listeners.forEach((listener) => {
+    const handler = template.interpolations[listener.interpolationIndex];
+    const prevHandler =
+      templatesByKey[key].interpolations[listener.interpolationIndex];
+
+    if (prevHandler !== handler) {
+      domMutations.push(() => {
+        const elementKey =
+          key + "." + template.identifiers[listener.identifierIndex].suffix;
+
+        getElementByKey(elementKey).removeEventListener(
+          listener.event,
+          prevHandler,
+        );
+
+        getElementByKey(elementKey).addEventListener(listener.event, handler);
+      });
+    }
+  });
+
+  const keysToRerender = [];
+  const renderedPropsByKey = {};
+
+  template.props.forEach((prop, i) => {
+    const propKey =
+      key + "." + template.identifiers[prop.identifierIndex].suffix;
+
+    // Check prop equality across renders
+    if (
+      templatesByKey[key].props[i].value !== prop.value ||
+      templatesByKey[key].interpolations[prop.interpolationIndex] !==
+        template.interpolations[prop.interpolationIndex]
+    ) {
+      keysToRerender.push(propKey);
+    }
+
+    renderedPropsByKey[propKey] ||= {};
+    renderedPropsByKey[propKey][prop.name] =
+      "value" in prop
+        ? prop.value
+        : template.interpolations[prop.interpolationIndex];
+  });
+
+  // Check if the number of props for each key is the same (sufficient with the
+  // quality check above)
+  Object.keys(renderedPropsByKey).forEach((key) => {
+    if (
+      Object.keys(propsByKey[key]).length !==
+      Object.keys(renderedPropsByKey[key]).length
+    ) {
+      keysToRerender.push(key);
+    }
+  });
+
+  propsByKey = { ...propsByKey, ...renderedPropsByKey };
+  keysToRerender.forEach((key) =>
+    render(key, componentsByKey[key], depth + 1, domMutations),
+  );
+
+  if (depth === 0 && domMutations.length) {
+    domMutations.forEach((mutation) => mutation());
+  }
+
+  templatesByKey[key] = template;
 }
 
 function WithChildren({ children }) {
@@ -545,47 +918,186 @@ function Heading({ children }) {
   return html`<h1>${children}</h1> `;
 }
 
-const App = () => {
-  // return html`<Heading>hello world</Heading>`;
+let count = 0;
 
-  const clickable = "cursor: pointer;";
-
+function Counter() {
   return html`
-    hi there
-    <div
-      id=${"attr-value"}
-      style=${clickable}
-      onClick=${() => {
-        console.log("hello world");
-      }}
-    >
-      attr test
-    </div>
-    <OtherPropsTest id="my-test-component" class="h-small w-medium">
-      pretty sure this is working
-    </OtherPropsTest>
-    <WithChildren>
-      ${html`<span>
-        this is a slot ${html`<div>and this is a nested slot</div>`}
-      </span>`}
-      hello world
-      <div class=${"my-div"} onMouseMove=${() => {}}>how about here</div>
-      <WithChildren>
-        hello again
-        <WithChildren>it's working!</WithChildren>
-      </WithChildren>
-    </WithChildren>
+    <div>${count}</div>
     <button
       onClick=${() => {
-        console.log("click!");
+        count++;
+        render("root.0", Counter);
       }}
     >
-      <span>press me</span>
+      ↑
     </button>
+    <button
+      onClick=${() => {
+        count--;
+        render("root.0", Counter);
+      }}
+    >
+      ↓
+    </button>
+  `;
+}
+
+let todoCount = 0;
+function todoId() {
+  return ++todoCount;
+}
+
+let todos = [...Array(3)].map(() => ({
+  id: todoId(),
+}));
+
+function TodoList() {
+  return html`
+    <div>
+      <h1 style="display: inline">Todos</h1>
+      <button
+        onClick=${() => {
+          todos.push({ id: todoId() });
+          render("root.0", TodoList);
+        }}
+      >
+        +
+      </button>
+    </div>
+    ${todos.map(
+      (todo) => html(todo.id)`
+        <Todo id=${todo.id} />
+      `,
+    )}
+  `;
+}
+
+function Todo({ id }) {
+  return html`
+    <div>
+      <input type="checkbox" />
+      <input type="text" placeholder=${`To do [${id}]`} />
+      <button
+        onClick=${() => {
+          const index = todos.findIndex((todo) => todo.id === id);
+          const todo = todos[index];
+
+          todos.splice(index, 1);
+          todos.splice(index - 1, 0, todo);
+
+          render("root.0", TodoList);
+        }}
+      >
+        ↑
+      </button>
+      <button
+        onClick=${() => {
+          const index = todos.findIndex((todo) => todo.id === id);
+          const todo = todos[index];
+
+          todos.splice(index, 1);
+          todos.splice(index + 1, 0, todo);
+
+          render("root.0", TodoList);
+        }}
+      >
+        ↓
+      </button>
+      <button
+        onClick=${() => {
+          todos.splice(todos.findIndex((todo) => todo.id === id) + 1, 0, {
+            id: todoId(),
+          });
+          render("root.0", TodoList);
+        }}
+      >
+        +
+      </button>
+      <button
+        onClick=${() => {
+          todos.splice(
+            todos.findIndex((todo) => todo.id === id),
+            1,
+          );
+          render("root.0", TodoList);
+        }}
+      >
+        -
+      </button>
+    </div>
+  `;
+}
+
+TodoList.components = { Todo };
+
+let expanded = false;
+
+function Accordion({ title, description }) {
+  return html`
+    <div>
+      <div>
+        <h2 style="display: inline">${title}</h2>
+        <button
+          onclick=${() => {
+            expanded = !expanded;
+            render("root.0", Accordion);
+          }}
+        >
+          ${expanded ? "x" : "+"}
+        </button>
+      </div>
+      ${expanded && html`<p>${description}</p>`}
+    </div>
+  `;
+}
+
+let value = "";
+
+function TextInput() {
+  return html`
+    <input
+      value=${value}
+      oninput=${(e) => {
+        value = e.target.value;
+        render("root.0", TextInput);
+      }}
+    />
+    <button
+      onclick=${() => {
+        value = "";
+        render("root.0", TextInput);
+      }}
+    >
+      X
+    </button>
+  `;
+}
+
+const App = () => {
+  return html`<Counter />`;
+
+  return html`<TodoList />`;
+
+  return html`<TextInput />`;
+
+  return html`
+    <Accordion
+      title="Hello world"
+      description="Lorem ipsum dolor sit amet. The quick brown fox jumped over the lazy dog."
+    />
   `;
 };
 
-App.components = { Heading, WithChildren, OtherPropsTest };
+App.components = {
+  Heading,
+  WithChildren,
+  OtherPropsTest,
+  Counter,
+  Todo,
+  TodoList,
+  Accordion,
+  TextInput,
+};
 
 const result = renderToString("root", App);
 const root = document.getElementById("root");

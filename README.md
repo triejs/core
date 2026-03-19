@@ -3,6 +3,11 @@
 Helix is a modern, lightweight JSX/React alternative that does not require a
 compiler and can run directly in the browser.
 
+> ⚠️ Warning
+>
+> This project is not production ready. It is under active development and the
+> documentation may be out of date.
+
 ## Getting started
 
 In `app.js` add:

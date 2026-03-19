@@ -73,7 +73,7 @@ function addEventListener(instanceKey, event, listener) {
 
 function cleanupChildren(instanceKey) {
   const staleInstances = Object.entries(instances).filter(
-    ([key]) => key !== instanceKey && key.startsWith(instanceKey)
+    ([key]) => key !== instanceKey && key.startsWith(instanceKey),
   );
 
   staleInstances.forEach(([key, instance]) => {
@@ -90,7 +90,7 @@ function setHtml(key, html) {
     `//comment()[contains(string(), " ${key} ")]`,
     document,
     null,
-    XPathResult.FIRST_ORDERED_NODE_TYPE
+    XPathResult.FIRST_ORDERED_NODE_TYPE,
   ).singleNodeValue;
 
   let nextSibling = node.nextSibling;
@@ -116,7 +116,7 @@ function setText(key, text) {
     `//comment()[contains(string(), " ${key} ")]`,
     document,
     null,
-    XPathResult.FIRST_ORDERED_NODE_TYPE
+    XPathResult.FIRST_ORDERED_NODE_TYPE,
   ).singleNodeValue;
 
   let nextSibling = node.nextSibling;
@@ -201,7 +201,7 @@ function parseComponents(html, components) {
           ? ""
           : marker) +
           tag +
-          (tag.endsWith("/>") ? `</${componentName}>` : "")
+          (tag.endsWith("/>") ? `</${componentName}>` : ""),
       )
       .join("");
   });
@@ -209,7 +209,7 @@ function parseComponents(html, components) {
   componentNames.forEach((componentName) => {
     parsed = parsed.replaceAll(
       componentName,
-      getCustomElementName(componentName)
+      getCustomElementName(componentName),
     );
   });
 
@@ -263,7 +263,7 @@ function getTemplateBuilder(
             if (isAttribute) {
               const attributeName = result.slice(
                 result.split("").findLastIndex((char) => char === " ") + 1,
-                -1
+                -1,
               );
 
               childNodes[i - 1].attribute = true;
@@ -296,12 +296,12 @@ function getTemplateBuilder(
             );
           }
         }, ""),
-        components
+        components,
       ),
       props: childNodes.filter((child) => child.isProps),
       attributes: childNodes.filter((child) => child.attribute),
       children: childNodes.filter(
-        (child) => !child.attribute && !child.isProps
+        (child) => !child.attribute && !child.isProps,
       ),
     };
   };
@@ -315,7 +315,7 @@ export default function helix() {
         hlx.components,
         undefined,
         strings,
-        ...children
+        ...children,
       )();
     } else if (typeof stringsOrConfig === "string") {
       const key = stringsOrConfig;
@@ -339,7 +339,7 @@ function fillTemplate(node, key = "", parents = []) {
 
   const matches = [
     ...template.matchAll(
-      /(HLX_SLOT)|(HLX_NODE_KEY)|(HLX_ATTR)|(\.\.\.HLX_PROPS)/g
+      /(HLX_SLOT)|(HLX_NODE_KEY)|(HLX_ATTR)|(\.\.\.HLX_PROPS)/g,
     ),
   ];
 
@@ -452,8 +452,8 @@ function fillTemplate(node, key = "", parents = []) {
     (parent) =>
       (parent.html = parent.html.replace(
         `HLX_CHILD_${currentInstanceKey + "-" + key}`,
-        node.html
-      ))
+        node.html,
+      )),
   );
 
   return node;
@@ -490,7 +490,7 @@ function makeDeepSignalProxy(value, path, signalId) {
         eventTarget.dispatchEvent(
           new CustomEvent("signalUpdate", {
             detail: { id: signalId, path: (path ? path + "." : "") + prop },
-          })
+          }),
         );
       }
 
@@ -539,7 +539,7 @@ function getDomMutations(prev, next, mutations = []) {
     `//comment()[contains(string(), " ${next.key} ")]`,
     document,
     null,
-    XPathResult.FIRST_ORDERED_NODE_TYPE
+    XPathResult.FIRST_ORDERED_NODE_TYPE,
   ).singleNodeValue?.nextSibling;
 
   if (next.attribute && prev.html !== next.html) {
@@ -585,13 +585,13 @@ function render(destination, component) {
     destination instanceof Element
       ? destination
       : isFirstRender
-      ? document.evaluate(
-          `//comment()[contains(string(), " ${destinationKey} ")]`,
-          document,
-          null,
-          XPathResult.FIRST_ORDERED_NODE_TYPE
-        ).singleNodeValue?.nextSibling
-      : undefined;
+        ? document.evaluate(
+            `//comment()[contains(string(), " ${destinationKey} ")]`,
+            document,
+            null,
+            XPathResult.FIRST_ORDERED_NODE_TYPE,
+          ).singleNodeValue?.nextSibling
+        : undefined;
 
   if (isFirstRender && element.innerHTML) {
     propsByNodeKey[destinationKey] ||= {};
@@ -610,7 +610,7 @@ function render(destination, component) {
 
   if (!isFirstRender) {
     getDomMutations(instances[destinationKey].prevTemplate, results).forEach(
-      (mutation) => mutation()
+      (mutation) => mutation(),
     );
 
     Object.entries(propsByParentNodeKey[currentInstanceKey] || {}).forEach(
@@ -618,15 +618,15 @@ function render(destination, component) {
         if (
           !Object.entries(props).every(
             ([propKey, value]) =>
-              previousPropsByNodeKey[nodeKey][propKey] === value
+              previousPropsByNodeKey[nodeKey][propKey] === value,
           )
         ) {
           eventTarget.dispatchEvent(
-            new CustomEvent("propsChange", { detail: { key: nodeKey } })
+            new CustomEvent("propsChange", { detail: { key: nodeKey } }),
           );
         }
         previousPropsByNodeKey[nodeKey] = props;
-      }
+      },
     );
   } else {
     element.innerHTML = results.html;
@@ -662,7 +662,7 @@ export function createRoot(domNode, components) {
       domNode.replaceChildren(
         document.createComment(` ${destinationKey} `),
         destination,
-        document.createComment(` ${destinationKey} `)
+        document.createComment(` ${destinationKey} `),
       );
 
       // Handle events
@@ -677,7 +677,7 @@ export function createRoot(domNode, components) {
           if (instances[destinationKey].signalAccess?.[id]?.includes(path)) {
             render(destinationKey, application);
           }
-        }
+        },
       );
 
       render(destination, application);
