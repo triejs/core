@@ -900,6 +900,85 @@ function render(key, node, depth = 0, domMutations = []) {
   templatesByKey[key] = template;
 }
 
+// DEV: this should be a week map or something?
+const proxyMeta = new Map();
+
+// DEV: what about reflection?
+
+// DEV: signal liveness is an interesting idea
+const proxyHandler = {
+  get(target, prop) {
+    proxyMeta.set(target[prop], proxyMeta.get(target[prop]) || {}); // DEV: hmmm
+    proxyMeta.set(target, proxyMeta.get(target) || {});
+
+    if (proxyMeta.get(target).isLive) {
+      console.log("[get] it's alive!"); // DEV: why is this getting logged so much?
+      if (target[prop] && typeof target[prop] === "object") {
+        proxyMeta.get(target[prop]).isLive = true;
+      }
+    } else if (target[prop] && typeof target[prop] === "object") {
+      proxyMeta.get(target[prop]).isLive = false;
+    }
+
+    if (!proxyMeta.get(target).isRoot) {
+      proxyMeta.get(target).isLive = false;
+    }
+
+    return target[prop];
+  },
+
+  set(target, prop, value) {
+    proxyMeta.set(target[prop], proxyMeta.get(target[prop]) || {}); // DEV: necessary?
+
+    if (proxyMeta.get(target)?.isLive) {
+      console.log("[set] it's alive!");
+    }
+
+    target[prop] = value;
+
+    return true;
+  },
+};
+
+// DEV: no way to do what you want without mutation?
+
+// DEV: is there a way to construct this such that none of the traps are
+// triggered while the deep proxy is being constructed (thought that's what I
+// did)?
+function deepProxy(target, handler) {
+  const proxied = new Proxy(target, handler);
+
+  // DEV: proxy instantiation should happen JIT inside the proxy hanlder
+  Object.entries(proxied).forEach(([key, value]) => {
+    if (value && typeof value === "object") {
+      proxied[key] = deepProxy(proxied[key], handler);
+    }
+  });
+
+  return proxied;
+}
+
+// DEV: looks like this is actually kind of working
+
+// DEV: signal liveness is the kind of thing that you'll actually want to write
+// tests for
+
+// DEV: create vs make
+function createSignal(initialValue) {
+  const target = { $val: initialValue };
+  const signal = deepProxy(target, proxyHandler);
+
+  proxyMeta.set(target, { isLive: true, isRoot: true });
+
+  return signal;
+}
+
+// DEV: this is another one that will need to be cleared
+// - have a cache generator?
+const signalsByKey = {};
+
+function useSignal() {}
+
 function WithChildren({ children }) {
   return html`
     <br />
