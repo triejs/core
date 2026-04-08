@@ -1,3 +1,5 @@
+const DEBUG = true;
+
 const phraseTypes = {
   IDENTIFIER: "identifier",
   ATTRIBUTE: "attribute",
@@ -7,23 +9,38 @@ const phraseTypes = {
 };
 
 const INVALID_ARRAY_ITEM =
-  "Each element in an array must be wrapped in html(key)`...`";
+  "[helix] Each element in an array must be wrapped in html(key)`...`";
 const MISSING_ARRAY_ITEM_KEY =
-  "Each element in an array must have a key. Pass one like this: html(key)`...`";
+  "[helix] Each element in an array must have a key. Pass one like this: html(key)`...`";
 
-// TODO
 function debug(...msg) {
-  console.log(...msg);
+  DEBUG && console.log(...msg);
 }
 
 function isTemplate(value) {
   return value && value._isTemplateNode;
 }
 
+function isTemplateMatch(a, b) {
+  if (!a.hash && !b.hash) {
+    return a === b;
+  }
+  return a.hash === b.hash;
+}
+
+function isInterpolationsMatch(a, b) {
+  return (
+    a.interpolations.length === b.interpolations.length &&
+    a.interpolations.every(
+      (value, i) => isPrimitive(value) && b.interpolations[i] === value,
+    )
+  );
+}
+
 function isPrimitive(value) {
   return (
     value === null ||
-    typeof value === "undefined" ||
+    value === undefined ||
     typeof value === "string" ||
     typeof value === "boolean" ||
     typeof value === "number"
@@ -34,11 +51,20 @@ function canRenderPrimitive(value) {
   return typeof value === "string" || typeof value === "number";
 }
 
-function isTemplateMatch(a, b) {
-  if (!a.hash && !b.hash) {
-    return a === b;
+function isPlainObject(value) {
+  if (!value || typeof value !== "object") {
+    return false;
   }
-  return a.hash === b.hash;
+
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === null || prototype === Object.prototype;
+}
+
+function isAttrTruthy(value) {
+  if (value === false || value === undefined || value === null) {
+    return false;
+  }
+  return true;
 }
 
 function isMergeable(phrase) {
@@ -412,13 +438,18 @@ function parseTemplateInPlace(template) {
   template.parsedHtmlPhrases = mergePhrases(template.parsedHtmlPhrases);
 }
 
-let currentKey;
-let templatesByKey = {};
+const keyStack = [];
+function getCurrentKey() {
+  return keyStack.at(-1);
+}
+
+const templatesByKey = {};
+const componentsByKey = {};
+
 let propsByKey = {};
-let componentsByKey = {};
 
 function renderToString(key, node, result = { html: "", listenersByKey: {} }) {
-  currentKey = key;
+  keyStack.push(key);
 
   let template;
   if (isTemplate(node)) {
@@ -433,6 +464,8 @@ function renderToString(key, node, result = { html: "", listenersByKey: {} }) {
     if (canRenderPrimitive(template)) {
       result.html += template;
     }
+
+    keyStack.pop();
     return result;
   }
 
@@ -463,10 +496,23 @@ function renderToString(key, node, result = { html: "", listenersByKey: {} }) {
       case phraseTypes.ATTRIBUTE:
         {
           const attribute = template.attributes[phrase.index];
-          result.html += `"${
-            // TODO: you may need to escape this
-            template.interpolations[attribute.interpolationIndex]
-          }"`;
+          const value = template.interpolations[attribute.interpolationIndex];
+
+          if (value === true) {
+            // Truncate true boolean attributes to just the name
+            result.html = result.html.slice(0, -1);
+          } else if (!isAttrTruthy(value)) {
+            // Strip out false or nullish attributes
+            result.html = result.html.slice(
+              0,
+              result.html.length - attribute.name.length - 1,
+            );
+          } else {
+            result.html += `"${
+              // TODO: you may need to escape this
+              value
+            }"`;
+          }
         }
         break;
       case phraseTypes.SLOT:
@@ -482,6 +528,8 @@ function renderToString(key, node, result = { html: "", listenersByKey: {} }) {
               result.html += value;
             }
           } else if (isTemplate(value)) {
+            value.components ||= template.components;
+
             renderToString(activeKey, value, result);
           } else if (Array.isArray(value)) {
             if (!value.every(isTemplate)) {
@@ -493,8 +541,9 @@ function renderToString(key, node, result = { html: "", listenersByKey: {} }) {
             }
 
             value.forEach((item) => {
-              item.components ||= template.components;
               const itemKey = activeKey + "." + item.assignedkey;
+
+              item.components ||= template.components;
 
               result.html += `<!-- ${itemKey} -->`;
               renderToString(itemKey, item, result);
@@ -505,8 +554,8 @@ function renderToString(key, node, result = { html: "", listenersByKey: {} }) {
         break;
       case phraseTypes.COMPONENT:
         if (
-          phrase.tagName in node.components &&
-          typeof node.components[phrase.tagName] === "function"
+          phrase.tagName in template.components &&
+          typeof template.components[phrase.tagName] === "function"
         ) {
           propsByKey[activeKey] = Object.fromEntries(
             template.props.flatMap((prop) =>
@@ -529,9 +578,13 @@ function renderToString(key, node, result = { html: "", listenersByKey: {} }) {
             ),
           );
 
-          renderToString(activeKey, node.components[phrase.tagName], result);
+          renderToString(
+            activeKey,
+            template.components[phrase.tagName],
+            result,
+          );
         } else {
-          throw new Error(`Component "${phrase.tagName}" not found`);
+          throw new Error(`[helix] Component "${phrase.tagName}" not found`);
         }
         break;
     }
@@ -549,18 +602,25 @@ function renderToString(key, node, result = { html: "", listenersByKey: {} }) {
     });
   });
 
+  keyStack.pop();
   return result;
 }
 
 const elementsByKey = {};
 
 function getElementByKey(key) {
-  return (elementsByKey[key] ||= document.evaluate(
+  const el = (elementsByKey[key] ||= document.evaluate(
     `//comment()[contains(string(), " ${key} ")]`,
     document,
     null,
     XPathResult.FIRST_ORDERED_NODE_TYPE,
   ).singleNodeValue?.nextSibling);
+
+  if (!el.isConnected) {
+    throw new Error("[helix] Encountered disconnected element");
+  }
+
+  return el;
 }
 
 // TODO: you shouldn't call document.evaluate for each listener and it might be
@@ -634,36 +694,50 @@ function setHtml(key, html, mode = "set") {
   }
 }
 
-function clearChildKeys(key, obj) {
+function clearChildKeys(key, obj, clearSelf = true) {
   Object.keys(obj).forEach((objKey) => {
-    if (objKey.startsWith(key)) {
+    if (objKey.startsWith(key) && (clearSelf || objKey !== key)) {
       delete obj[objKey];
     }
   });
 }
 
-function clearTemplateCaches(key) {
-  clearChildKeys(key, templatesByKey);
-  clearChildKeys(key, propsByKey);
-  clearChildKeys(key, componentsByKey);
+function clearAll(key) {
+  clearTemplate(key, true);
+}
+
+function clearTemplate(key, clearOwnComponent = false) {
   clearChildKeys(key, elementsByKey);
+  clearChildKeys(key, templatesByKey);
+  clearChildKeys(key, propsByKey, clearOwnComponent);
+  clearChildKeys(key, signalInitsByKey, clearOwnComponent);
+  clearChildKeys(key, componentsByKey, clearOwnComponent);
+  clearChildKeys(key, accessByKey, clearOwnComponent);
+  clearChildKeys(key, enumeratedAccessByKey, clearOwnComponent);
 }
 
 function render(key, node, depth = 0, domMutations = []) {
-  currentKey = key;
+  keyStack.push(key);
 
   let template;
   if (isTemplate(node)) {
     template = node;
   } else {
     componentsByKey[key] = node;
+
+    delete accessByKey[key];
+    delete enumeratedAccessByKey[key];
     template = node(propsByKey[key] || {});
   }
 
   if (isPrimitive(template)) {
+    clearTemplate(key);
+
     domMutations.push(() =>
       setHtml(key, canRenderPrimitive(template) ? template : "", "text"),
     );
+
+    keyStack.pop();
     return;
   }
 
@@ -674,6 +748,8 @@ function render(key, node, depth = 0, domMutations = []) {
   template.components ||= node.components;
 
   if (!templatesByKey[key] || !isTemplateMatch(templatesByKey[key], template)) {
+    clearTemplate(key);
+
     const result = renderToString(key, template);
 
     domMutations.push(() => {
@@ -681,6 +757,7 @@ function render(key, node, depth = 0, domMutations = []) {
       hydrate(result);
     });
 
+    keyStack.pop();
     return;
   }
 
@@ -693,20 +770,29 @@ function render(key, node, depth = 0, domMutations = []) {
 
     if (isPrimitive(value)) {
       if (prevValue !== value) {
-        clearTemplateCaches(slotKey);
+        clearAll(slotKey);
 
         domMutations.push(() =>
           setHtml(slotKey, canRenderPrimitive(value) ? value : "", "text"),
         );
       }
-    } else if (
-      isTemplate(value) &&
-      (isPrimitive(prevValue) || !isTemplateMatch(prevValue, value))
-    ) {
-      render(slotKey, value, depth + 1, domMutations);
+    } else if (isTemplate(value)) {
+      if (
+        isPrimitive(prevValue) ||
+        !isTemplateMatch(prevValue, value) ||
+        !isInterpolationsMatch(prevValue, value)
+      ) {
+        if (isTemplate(prevValue) && !isTemplateMatch(prevValue, value)) {
+          clearAll(slotKey);
+        }
+
+        value.components ||= template.components;
+
+        render(slotKey, value, depth + 1, domMutations);
+      }
     } else if (Array.isArray(value)) {
       if (isTemplate(prevValue)) {
-        clearTemplateCaches(slotKey);
+        clearAll(slotKey);
       }
 
       if (!value.every(isTemplate)) {
@@ -738,7 +824,7 @@ function render(key, node, depth = 0, domMutations = []) {
       }
 
       if (renderAll) {
-        clearTemplateCaches(slotKey);
+        clearAll(slotKey);
         domMutations.push(() => setHtml(slotKey, ""));
 
         value.toReversed().forEach((item) => {
@@ -762,9 +848,9 @@ function render(key, node, depth = 0, domMutations = []) {
           if (
             !value.some((item) => item.assignedkey === prevItem.assignedkey)
           ) {
-            domMutations.push(() =>
-              setHtml(slotKey + "." + prevItem.assignedkey, "", "overwrite"),
-            );
+            const itemKey = slotKey + "." + prevItem.assignedkey;
+            clearAll(itemKey);
+            domMutations.push(() => setHtml(itemKey, "", "overwrite"));
           }
         });
 
@@ -775,8 +861,9 @@ function render(key, node, depth = 0, domMutations = []) {
             (prevItem) => prevItem.assignedkey === item.assignedkey,
           );
 
+          item.components ||= template.components;
+
           if (!prevItem) {
-            item.components ||= template.components;
             const result = renderToString(itemKey, item);
             const anchor = reversed
               .slice(i + 1)
@@ -797,7 +884,10 @@ function render(key, node, depth = 0, domMutations = []) {
 
               hydrate(result);
             });
-          } else if (item.hash !== prevItem.hash) {
+          } else if (
+            !isTemplateMatch(prevItem, item) ||
+            !isInterpolationsMatch(prevItem, item)
+          ) {
             render(itemKey, item, depth + 1, domMutations);
           }
         });
@@ -819,14 +909,23 @@ function render(key, node, depth = 0, domMutations = []) {
           key + "." + template.identifiers[attr.identifierIndex].suffix,
         );
 
-        element.setAttribute(attr.name, attrValue);
+        if (!isAttrTruthy(attrValue)) {
+          element.removeAttribute(attr.name);
+        } else if (attrValue === true) {
+          element.setAttribute(attr.name, "");
+        } else {
+          element.setAttribute(attr.name, attrValue);
+        }
 
-        if (
-          attr.name === "value" &&
-          element.tagName === "INPUT" &&
-          element.value !== attrValue
-        ) {
-          element.value = attrValue;
+        if (element.tagName === "INPUT") {
+          if (
+            attr.name === "checked" &&
+            element.checked !== isAttrTruthy(attrValue)
+          ) {
+            element.checked = isAttrTruthy(attrValue);
+          } else if (attr.name === "value" && element.value !== attrValue) {
+            element.value = attrValue;
+          }
         }
       });
     }
@@ -878,7 +977,7 @@ function render(key, node, depth = 0, domMutations = []) {
   });
 
   // Check if the number of props for each key is the same (sufficient with the
-  // quality check above)
+  // equality check above)
   Object.keys(renderedPropsByKey).forEach((key) => {
     if (
       Object.keys(propsByKey[key]).length !==
@@ -889,6 +988,7 @@ function render(key, node, depth = 0, domMutations = []) {
   });
 
   propsByKey = { ...propsByKey, ...renderedPropsByKey };
+
   keysToRerender.forEach((key) =>
     render(key, componentsByKey[key], depth + 1, domMutations),
   );
@@ -898,47 +998,175 @@ function render(key, node, depth = 0, domMutations = []) {
   }
 
   templatesByKey[key] = template;
+  keyStack.pop();
 }
 
-function WithChildren({ children }) {
-  return html`
-    <br />
-    children:
-    <div>${children}</div>
-  `;
+const accessByKey = {};
+const enumeratedAccessByKey = {};
+
+const pathPropertyName = Symbol();
+
+function subscribe(lookup, signalId, path) {
+  const currentKey = getCurrentKey();
+
+  if (currentKey) {
+    const access = (lookup[currentKey] ||= {});
+    const paths = (access[signalId] ||= []);
+
+    if (!paths.includes(path)) {
+      paths.push(path);
+    }
+  }
 }
 
-function OtherPropsTest({ id, class: className, children }) {
-  return html`<div id=${id} class=${className}>${children}</div> `;
+function renderSubs(lookup, signalId, path) {
+  Object.entries(lookup).forEach(([key, access]) => {
+    const paths = access[signalId];
+
+    // TODO: To ensure that each component is rendered no more than once per
+    // signal update you'll need to track mutations to the keyStack array
+    if (
+      paths?.includes(path) &&
+      // Check that the key is still present as rendering one key may clear
+      // others
+      lookup[key]
+    ) {
+      render(key, componentsByKey[key]);
+    }
+  });
 }
 
-WithChildren.components = { WithChildren, OtherPropsTest };
+class ProxyHandler {
+  #signalId;
 
-function Heading({ children }) {
-  return html`<h1>${children}</h1> `;
+  constructor(signalId, path) {
+    this.#signalId = signalId;
+    this.path = path;
+  }
+
+  get(target, prop, receiver) {
+    if (prop === pathPropertyName) {
+      return this.path;
+    }
+
+    const value = Reflect.get(target, prop, receiver);
+    let proxied;
+
+    if (Array.isArray(value) || isPlainObject(value)) {
+      if (typeof value[pathPropertyName] === "string") {
+        proxied = value;
+        proxied[pathPropertyName] = this.path + "." + prop;
+      } else {
+        proxied = new Proxy(
+          value,
+          new ProxyHandler(this.#signalId, this.path + "." + prop),
+        );
+      }
+    } else {
+      proxied = value;
+    }
+
+    if (getCurrentKey()) {
+      if (
+        Array.isArray(target) &&
+        (typeof value === "function" || prop === "length")
+      ) {
+        subscribe(enumeratedAccessByKey, this.#signalId, this.path);
+      } else {
+        subscribe(accessByKey, this.#signalId, this.path + "." + prop);
+      }
+    }
+
+    if (
+      Array.isArray(target) &&
+      (prop === "splice" ||
+        prop === "fill" ||
+        prop === "sort" ||
+        prop === "reverse" ||
+        prop === "shift" ||
+        prop === "unshift" ||
+        prop === "push" ||
+        prop === "pop")
+    ) {
+      return (...args) => {
+        debug("calling proxied", prop);
+
+        // TODO: In order to handle the edge case where an array is mutated via
+        // method but accessed elsewhere via arr[n], you'll need to track the
+        // mutations that occur during method execution, and then let
+        // subscribers know about them when the method is complete
+        const result = target[prop](...args);
+
+        renderSubs(enumeratedAccessByKey, this.#signalId, this.path);
+
+        return result;
+      };
+    }
+
+    return proxied;
+  }
+
+  has(target, prop, receiver) {
+    subscribe(enumeratedAccessByKey, this.#signalId, this.path);
+
+    return Reflect.has(target, prop, receiver);
+  }
+
+  ownKeys(target) {
+    subscribe(enumeratedAccessByKey, this.#signalId, this.path);
+
+    return Reflect.has(target, prop, receiver);
+  }
+
+  set(target, prop, value, receiver) {
+    if (prop === pathPropertyName) {
+      this.path = value;
+      return true;
+    }
+
+    Reflect.set(target, prop, value, receiver);
+
+    if (Array.isArray(target) || isPlainObject(target)) {
+      renderSubs(enumeratedAccessByKey, this.#signalId, this.path);
+    }
+
+    renderSubs(accessByKey, this.#signalId, this.path + "." + prop);
+
+    return true;
+  }
+
+  deleteProperty(target, prop) {
+    Reflect.deleteProperty(target, prop, receiver);
+
+    renderSubs(enumeratedAccessByKey, this.#signalId, this.path);
+
+    return true;
+  }
 }
 
-let count = 0;
+const signalInitsByKey = {};
+
+function signal(initialValue) {
+  if (getCurrentKey()) {
+    return (signalInitsByKey[getCurrentKey()] ||= new Proxy(
+      { val: initialValue },
+      new ProxyHandler(Symbol(), "[root]"),
+    ));
+  } else {
+    return new Proxy(
+      { val: initialValue },
+      new ProxyHandler(Symbol(), "[root]"),
+    );
+  }
+}
 
 function Counter() {
+  const $count = signal(0);
+
   return html`
-    <div>${count}</div>
-    <button
-      onClick=${() => {
-        count++;
-        render("root.0", Counter);
-      }}
-    >
-      ↑
-    </button>
-    <button
-      onClick=${() => {
-        count--;
-        render("root.0", Counter);
-      }}
-    >
-      ↓
-    </button>
+    <div>count: ${$count.val}</div>
+    <button onClick=${() => $count.val++}>↑</button>
+    <button onClick=${() => $count.val--}>↓</button>
   `;
 }
 
@@ -947,79 +1175,71 @@ function todoId() {
   return ++todoCount;
 }
 
-let todos = [...Array(3)].map(() => ({
+const initialTodos = [...Array(3)].map(() => ({
   id: todoId(),
+  checked: false,
+  text: "",
 }));
 
 function TodoList() {
+  console.log("[TodoList] rendering");
+
+  const $todos = signal(initialTodos);
+
   return html`
     <div>
       <h1 style="display: inline">Todos</h1>
       <button
-        onClick=${() => {
-          todos.push({ id: todoId() });
-          render("root.0", TodoList);
-        }}
+        onClick=${() =>
+          $todos.val.push({ id: todoId(), text: "", checked: false })}
       >
         +
       </button>
+      <button onClick=${() => $todos.val.pop()}>-</button>
+      <button onClick=${() => $todos.val.reverse()}>↑↓</button>
     </div>
-    ${todos.map(
-      (todo) => html(todo.id)`
-        <Todo id=${todo.id} />
-      `,
+    ${$todos.val.map(
+      (todo, i) =>
+        html(todo.id)`
+          <Todo id=${todo.id} $todos=${$todos} />
+        `,
     )}
   `;
 }
 
-function Todo({ id }) {
+function Todo({ id, $todos }) {
+  console.log("rendering", id);
+
+  const index = $todos.val.findIndex((todo) => todo.id === id);
+  const $todo = $todos.val[index];
+
   return html`
     <div>
-      <input type="checkbox" />
-      <input type="text" placeholder=${`To do [${id}]`} />
+      <input
+        type="checkbox"
+        checked=${$todo.checked}
+        onInput=${(e) => ($todo.checked = e.target.checked)}
+      />
+      <input
+        type="text"
+        placeholder=${`To do [${id}]`}
+        value=${$todo.text}
+        onInput=${(e) => ($todo.text = e.target.value)}
+      />
       <button
-        onClick=${() => {
-          const index = todos.findIndex((todo) => todo.id === id);
-          const todo = todos[index];
-
-          todos.splice(index, 1);
-          todos.splice(index - 1, 0, todo);
-
-          render("root.0", TodoList);
-        }}
-      >
-        ↑
-      </button>
-      <button
-        onClick=${() => {
-          const index = todos.findIndex((todo) => todo.id === id);
-          const todo = todos[index];
-
-          todos.splice(index, 1);
-          todos.splice(index + 1, 0, todo);
-
-          render("root.0", TodoList);
-        }}
-      >
-        ↓
-      </button>
-      <button
-        onClick=${() => {
-          todos.splice(todos.findIndex((todo) => todo.id === id) + 1, 0, {
+        onClick=${() =>
+          $todos.val.splice(index + 1, 0, {
             id: todoId(),
-          });
-          render("root.0", TodoList);
-        }}
+            text: "",
+            checked: false,
+          })}
       >
         +
       </button>
       <button
         onClick=${() => {
-          todos.splice(
-            todos.findIndex((todo) => todo.id === id),
-            1,
-          );
-          render("root.0", TodoList);
+          console.log("stack:", keyStack);
+          $todos.val.splice(index, 1);
         }}
       >
         -
@@ -1030,46 +1250,31 @@ function Todo({ id }) {
 
 TodoList.components = { Todo };
 
-let expanded = false;
-
 function Accordion({ title, description }) {
+  const $expanded = signal(true);
+
   return html`
     <div>
       <div>
         <h2 style="display: inline">${title}</h2>
-        <button
-          onclick=${() => {
-            expanded = !expanded;
-            render("root.0", Accordion);
-          }}
-        >
-          ${expanded ? "x" : "+"}
+        <button onclick=${() => ($expanded.val = !$expanded.val)}>
+          ${$expanded.val ? "x" : "+"}
         </button>
       </div>
-      ${expanded && html`<p>${description}</p>`}
+      ${$expanded.val && html`<p>${description}</p>`}
     </div>
   `;
 }
 
-let value = "";
-
 function TextInput() {
+  const $value = signal("");
+
   return html`
     <input
-      value=${value}
-      oninput=${(e) => {
-        value = e.target.value;
-        render("root.0", TextInput);
-      }}
+      value=${$value.val}
+      oninput=${(e) => ($value.val = e.target.value)}
     />
-    <button
-      onclick=${() => {
-        value = "";
-        render("root.0", TextInput);
-      }}
-    >
-      X
-    </button>
+    <button onclick=${() => ($value.val = "")}>X</button>
   `;
 }
 
@@ -1089,9 +1294,6 @@ const App = () => {
 };
 
 App.components = {
-  Heading,
-  WithChildren,
-  OtherPropsTest,
   Counter,
   Todo,
   TodoList,
