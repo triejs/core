@@ -914,8 +914,6 @@ function ensureProxyMeta(key) {
 // DEV: clear this, move this up
 const signalSubscriptionsByKey = {};
 
-// DEV: use this
-
 class ProxyHandler {
   #signal;
   $isRoot = false;
@@ -939,14 +937,15 @@ class ProxyHandler {
 
   get(target, prop) {
     console.log("prop:", prop);
-    if (prop === "$isLive") {
-      return this.$isLive;
-    }
+    // if (prop === "$isLive") {
+    //   return this.$isLive;
+    // }
 
-    if (prop === "$isRoot" || prop === "$isLive" || prop === "$path") {
-      // DEV: does this wok?
-      return this[prop];
-    }
+    // DEV: these checks can't go in the get trap
+    // if (prop === "$isRoot" || prop === "$isLive" || prop === "$path") {
+    //   // DEV: does this wok?
+    //   return this[prop];
+    // }
 
     const value = target[prop];
     let proxied;
@@ -963,7 +962,7 @@ class ProxyHandler {
 
       // DEV: use symbols for this kind of thing?
       proxied.$isLive = this.isLive;
-      proxied.$path = target.$path + "." + prop;
+      proxied.$path = this.$path + "." + prop;
 
       // target.$isLive = false;
     } else {
@@ -972,9 +971,9 @@ class ProxyHandler {
     }
 
     console.log("[get] target:", target);
-    console.log("[get] target.$isLive:", target.$isLive);
+    console.log("[get] this.$isLive:", this.$isLive);
 
-    if (target.$isLive && currentKey) {
+    if (this.$isLive && currentKey) {
       console.log("[get] it's alive!");
 
       const subs = (signalSubscriptionsByKey[currentKey] ||= []);
@@ -986,8 +985,8 @@ class ProxyHandler {
       }
     }
 
-    if (!target.$isRoot) {
-      target.$isLive = false;
+    if (!this.$isRoot) {
+      this.$isLive = false;
     }
 
     return proxied;
@@ -1001,13 +1000,17 @@ class ProxyHandler {
       return true;
     }
 
-    if (target.$isLive) {
+    target[prop] = value;
+
+    if (this.$isLive) {
       console.log("[set] it's alive!");
 
       // DEV: hmm, for perf, you might need some kind of two-way lookup
       Object.entries(signalSubscriptionsByKey).forEach(([key, subs]) => {
+        console.log(subs);
         if (subs.includes(this.#signal)) {
-          render(key, templatesByKey[key]);
+          console.log("found a match, rendering");
+          render(key, componentsByKey[key]);
         }
       });
     }
@@ -1017,89 +1020,6 @@ class ProxyHandler {
   }
 }
 
-// DEV: signal liveness is an interesting idea
-const proxyHandler = {
-  get(target, prop) {
-    ensureProxyMeta(target[prop]);
-    ensureProxyMeta(target);
-
-    // DEV: hmm, actually, I don't think proxy meta is the right approach
-    // - would be very difficult to keep things in sync as values get swapped
-    //   out, you should just use proxied props to store special values
-    // - pretty sure that does what you want
-    // - can you still make the liveness check work?
-
-    proxyMeta.get(target[prop]).path =
-      (proxyMeta.get(target).path || "[root]") + "." + prop;
-
-    console.log("[get] path:", proxyMeta.get(target[prop]).path);
-
-    if (proxyMeta.get(target).isLive) {
-      console.log("[get] it's alive!");
-
-      const meta = proxyMeta.get(target[prop]);
-      if (target[prop] && typeof target[prop] === "object") {
-        meta.isLive = true;
-      }
-
-      // DEV: this needs to be keyed in such a way that the keys can be cleared
-      // when a template is unmounted
-      if (currentKey && !meta.subscriptions.includes(currentKey)) {
-        meta.subscriptions.push(currentKey);
-      }
-
-      // DEV: setup subscriptions here
-    } else if (target[prop] && typeof target[prop] === "object") {
-      proxyMeta.get(target[prop]).isLive = false;
-    }
-
-    if (!proxyMeta.get(target).isRoot) {
-      proxyMeta.get(target).isLive = false;
-    }
-
-    return target[prop];
-  },
-
-  set(target, prop, value) {
-    // DEV: you need to use the path as key, not the value itself
-    const metaKey = target[prop]; // DEV: hmm
-    target[prop] = value;
-
-    ensureProxyMeta(target[prop]); // DEV: necessary, right?
-
-    // DEV: is this right?
-    // - are you off by one level?
-    if (proxyMeta.get(target)?.isLive) {
-      console.log("[set] it's alive!");
-
-      const meta = proxyMeta.get(metaKey);
-      meta.subscriptions.forEach((key) => render(key, componentsByKey[key]));
-    }
-
-    return true;
-  },
-};
-
-// DEV: no way to do what you want without mutation?
-
-// DEV: is there a way to construct this such that none of the traps are
-// triggered while the deep proxy is being constructed (thought that's what I
-// did)?
-function deepProxy(target, handler) {
-  const proxied = new Proxy(target, handler);
-
-  // DEV: proxy instantiation should happen JIT inside the proxy hanlder
-  Object.entries(proxied).forEach(([key, value]) => {
-    if (value && typeof value === "object") {
-      proxied[key] = deepProxy(proxied[key], handler);
-    }
-  });
-
-  return proxied;
-}
-
-// DEV: looks like this is actually kind of working
-
 // DEV: signal liveness is the kind of thing that you'll actually want to write
 // tests for
 
@@ -1107,23 +1027,14 @@ function deepProxy(target, handler) {
 // - what about just calling it `signal`
 function signal(initialValue) {
   const target = { $val: initialValue };
-  // const signal = deepProxy(target, proxyHandler);
 
   const signal = new Proxy(
     target,
     new ProxyHandler(Symbol(), { isRoot: true, isLive: true }),
   );
 
-  // proxyMeta.set(target, { isLive: true, isRoot: true });
-
   return signal;
 }
-
-// DEV: this is another one that will need to be cleared
-// - have a cache generator?
-const signalsByKey = {};
-
-function useSignal() {}
 
 function WithChildren({ children }) {
   return html`
@@ -1152,14 +1063,7 @@ const count = signal(0);
 function Counter() {
   return html`
     <div>${count.$val}</div>
-    <button
-      onClick=${() => {
-        count.$val++;
-        console.log(signalSubscriptionsByKey);
-      }}
-    >
-      ↑
-    </button>
+    <button onClick=${() => count.$val++}>↑</button>
     <button onClick=${() => count.$val--}>↓</button>
   `;
 }
