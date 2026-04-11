@@ -901,32 +901,21 @@ function render(key, node, depth = 0, domMutations = []) {
   templatesByKey[key] = template;
 }
 
-// DEV: this should be a week map or something?
-const proxyMeta = new Map();
-
-function ensureProxyMeta(key) {
-  // DEV: you could use getOrInsert
-  proxyMeta.set(key, proxyMeta.get(key) || { subscriptions: [] }); // DEV: is subscriptions the right word?
-}
-
 // DEV: what about reflection?
 
 // DEV: clear this, move this up
 const signalSubscriptionsByKey = {};
 
 class ProxyHandler {
-  #signal;
+  #symbol;
   $isRoot = false;
   $isLive = false;
 
   // DEV: explain somewhere why it's important that these aren't usually set by
   // constructor args
-  constructor(signal, { isRoot = false, isLive = false } = {}) {
-    // DEV: better name?
-    this.#signal = signal;
+  constructor(symbol, { isRoot = false, isLive = false } = {}) {
+    this.#symbol = symbol;
 
-    // DEV: these are not quite right since target in the proxy is the original
-    // object
     this.$isRoot = isRoot;
     this.$isLive = isLive;
 
@@ -936,52 +925,31 @@ class ProxyHandler {
   }
 
   get(target, prop) {
-    console.log("prop:", prop);
-    // if (prop === "$isLive") {
-    //   return this.$isLive;
-    // }
-
-    // DEV: these checks can't go in the get trap
-    // if (prop === "$isRoot" || prop === "$isLive" || prop === "$path") {
-    //   // DEV: does this wok?
-    //   return this[prop];
-    // }
-
     const value = target[prop];
     let proxied;
 
     if (value && typeof value === "object") {
-      // let proxied;
-
-      // DEV: what about proxies of proxies?
       if (value instanceof Proxy) {
         proxied = value;
       } else {
-        proxied = new Proxy(value, new ProxyHandler(this.#signal));
+        proxied = new Proxy(value, new ProxyHandler(this.#symbol));
       }
 
       // DEV: use symbols for this kind of thing?
       proxied.$isLive = this.isLive;
       proxied.$path = this.$path + "." + prop;
-
-      // target.$isLive = false;
     } else {
-      // target.$isLive = false;
       proxied = value;
     }
-
-    console.log("[get] target:", target);
-    console.log("[get] this.$isLive:", this.$isLive);
 
     if (this.$isLive && currentKey) {
       console.log("[get] it's alive!");
 
       const subs = (signalSubscriptionsByKey[currentKey] ||= []);
-      // DEV: here is where you would set up subscriptions
 
-      if (!subs.includes(this.#signal)) {
+      if (!subs.includes(this.#symbol)) {
         // DEV: you forgot the path part
-        subs.push(this.#signal);
+        subs.push(this.#symbol);
       }
     }
 
@@ -992,10 +960,8 @@ class ProxyHandler {
     return proxied;
   }
 
-  // DEV: no need to allow setting root?
   set(target, prop, value) {
     if (prop === "$isRoot" || prop === "$isLive" || prop === "$path") {
-      // DEV: does this wok?
       this[prop] = value;
       return true;
     }
@@ -1006,16 +972,18 @@ class ProxyHandler {
       console.log("[set] it's alive!");
 
       // DEV: hmm, for perf, you might need some kind of two-way lookup
+      // - this might be a good use case for a signal, you could have a delete
+      //   trap on the template-subscription mapping that would cascade deletes
+      //   to the proxy-template mapping
       Object.entries(signalSubscriptionsByKey).forEach(([key, subs]) => {
         console.log(subs);
-        if (subs.includes(this.#signal)) {
+        if (subs.includes(this.#symbol)) {
           console.log("found a match, rendering");
           render(key, componentsByKey[key]);
         }
       });
     }
 
-    // DEV: when would you ever return false?
     return true;
   }
 }
@@ -1062,7 +1030,7 @@ const count = signal(0);
 
 function Counter() {
   return html`
-    <div>${count.$val}</div>
+    <div>count: ${count.$val}</div>
     <button onClick=${() => count.$val++}>↑</button>
     <button onClick=${() => count.$val--}>↓</button>
   `;
