@@ -905,6 +905,7 @@ function render(key, node, depth = 0, domMutations = []) {
 
 // DEV: clear this, move this up
 const signalMapsByKey = {};
+const signalInitsByKey = {};
 
 class ProxyHandler {
   #signalSymbol;
@@ -994,12 +995,18 @@ class ProxyHandler {
 function signal(initialValue) {
   const target = { $val: initialValue };
 
-  const signal = new Proxy(
-    target,
-    new ProxyHandler(Symbol(), { isRoot: true, isLive: true }),
-  );
-
-  return signal;
+  // DEV: dry this up?
+  if (currentKey) {
+    return (signalInitsByKey[currentKey] ||= new Proxy(
+      target,
+      new ProxyHandler(Symbol(), { isRoot: true, isLive: true }),
+    ));
+  } else {
+    return new Proxy(
+      target,
+      new ProxyHandler(Symbol(), { isRoot: true, isLive: true }),
+    );
+  }
 }
 
 function WithChildren({ children }) {
@@ -1024,9 +1031,10 @@ function Heading({ children }) {
 // - maybe you don't need use since the only functions that will be called
 //   during the render cycle are hooks?
 // - does solid still call them hooks?
-const count = signal(0);
 
 function Counter() {
+  const count = signal(0);
+
   return html`
     <div>count: ${count.$val}</div>
     <button onClick=${() => count.$val++}>↑</button>
