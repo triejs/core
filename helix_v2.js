@@ -1016,11 +1016,6 @@ function signal(initialValue) {
   }
 }
 
-// DEV: signal vs useSignal?
-// - maybe you don't need use since the only functions that will be called
-//   during the render cycle are hooks?
-// - does solid still call them hooks?
-
 function Counter() {
   const count = signal(0);
 
@@ -1041,6 +1036,8 @@ const todos = signal(
     id: todoId(),
   })),
 );
+
+// DEV: possible to get into a weird state where some items can't be deleted
 
 function TodoList() {
   return html`
@@ -1185,9 +1182,6 @@ const App = () => {
 };
 
 App.components = {
-  Heading,
-  WithChildren,
-  OtherPropsTest,
   Counter,
   Todo,
   TodoList,
