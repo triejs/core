@@ -862,6 +862,10 @@ function render(key, node, depth = 0, domMutations = []) {
     const propKey =
       key + "." + template.identifiers[prop.identifierIndex].suffix;
 
+    // DEV: for rendering purposes, can the same signal be considered
+    // identical across renders regardless of whether it's been mutated?
+    // - tainting objects?
+
     // Check prop equality across renders
     if (
       templatesByKey[key].props[i].value !== prop.value ||
@@ -879,7 +883,7 @@ function render(key, node, depth = 0, domMutations = []) {
   });
 
   // Check if the number of props for each key is the same (sufficient with the
-  // quality check above)
+  // equality check above)
   Object.keys(renderedPropsByKey).forEach((key) => {
     if (
       Object.keys(propsByKey[key]).length !==
@@ -929,7 +933,8 @@ class ProxyHandler {
     let proxied;
 
     if (value && typeof value === "object") {
-      if (value instanceof Proxy) {
+      // DEV: hmm, instanceof Proxy doesn't work with arrays
+      if (typeof value.$isLive === "boolean") {
         proxied = value;
       } else {
         proxied = new Proxy(value, new ProxyHandler(this.#signalSymbol));
@@ -990,20 +995,15 @@ class ProxyHandler {
 // DEV: signal liveness is the kind of thing that you'll actually want to write
 // tests for
 
-// DEV: create vs make
-// - what about just calling it `signal`
 function signal(initialValue) {
-  const target = { $val: initialValue };
-
-  // DEV: dry this up?
   if (currentKey) {
     return (signalInitsByKey[currentKey] ||= new Proxy(
-      target,
+      { $val: initialValue },
       new ProxyHandler(Symbol(), { isRoot: true, isLive: true }),
     ));
   } else {
     return new Proxy(
-      target,
+      { $val: initialValue },
       new ProxyHandler(Symbol(), { isRoot: true, isLive: true }),
     );
   }
@@ -1047,9 +1047,15 @@ function todoId() {
   return ++todoCount;
 }
 
-let todos = [...Array(3)].map(() => ({
-  id: todoId(),
-}));
+// let todos = [...Array(3)].map(() => ({
+//   id: todoId(),
+// }));
+
+const todos = signal(
+  [...Array(3)].map(() => ({
+    id: todoId(),
+  })),
+);
 
 function TodoList() {
   return html`
@@ -1057,14 +1063,16 @@ function TodoList() {
       <h1 style="display: inline">Todos</h1>
       <button
         onClick=${() => {
-          todos.push({ id: todoId() });
-          render("root.0", TodoList);
+          // DEV: hmm
+          // todos.$val.push({ id: todoId() });
+          todos.$val = [...todos.$val, { id: todoId() }];
+          // render("root.0", TodoList);
         }}
       >
         +
       </button>
     </div>
-    ${todos.map(
+    ${todos.$val.map(
       (todo) => html(todo.id)`
         <Todo id=${todo.id} />
       `,
@@ -1079,13 +1087,17 @@ function Todo({ id }) {
       <input type="text" placeholder=${`To do [${id}]`} />
       <button
         onClick=${() => {
-          const index = todos.findIndex((todo) => todo.id === id);
-          const todo = todos[index];
+          // DEV: hmm, don't think this is going to work
 
-          todos.splice(index, 1);
-          todos.splice(index - 1, 0, todo);
+          const index = todos.$val.findIndex((todo) => todo.id === id);
+          const todo = todos.$val[index];
 
-          render("root.0", TodoList);
+          todos.$val.splice(index, 1);
+          todos.$val.splice(index - 1, 0, todo);
+
+          todos.$val = todos.$val;
+
+          // render("root.0", TodoList);
         }}
       >
         ↑
@@ -1105,10 +1117,15 @@ function Todo({ id }) {
       </button>
       <button
         onClick=${() => {
-          todos.splice(todos.findIndex((todo) => todo.id === id) + 1, 0, {
-            id: todoId(),
-          });
-          render("root.0", TodoList);
+          // DEV: would be nice to find a more ergonomic way to do things
+          todos.$val.splice(
+            todos.$val.findIndex((todo) => todo.id === id) + 1,
+            0,
+            {
+              id: todoId(),
+            },
+          );
+          todos.$val = todos.$val;
         }}
       >
         +
@@ -1174,7 +1191,7 @@ function TextInput() {
 }
 
 const App = () => {
-  return html`<Counter />`;
+  // return html`<Counter />`;
 
   return html`<TodoList />`;
 
