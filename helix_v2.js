@@ -412,7 +412,10 @@ function parseTemplateInPlace(template) {
   template.parsedHtmlPhrases = mergePhrases(template.parsedHtmlPhrases);
 }
 
-let currentKey;
+const keyStack = [];
+function getCurrentKey() {
+  return keyStack.at(-1);
+}
 
 // DEV: shouldn't these be constants?
 let templatesByKey = {};
@@ -420,7 +423,7 @@ let propsByKey = {};
 let componentsByKey = {};
 
 function renderToString(key, node, result = { html: "", listenersByKey: {} }) {
-  currentKey = key;
+  keyStack.push(key);
 
   let template;
   if (isTemplate(node)) {
@@ -551,6 +554,9 @@ function renderToString(key, node, result = { html: "", listenersByKey: {} }) {
     });
   });
 
+  // DEV: when does the template get added to the cache?
+  // - should the render fn match?
+  keyStack.pop();
   return result;
 }
 
@@ -655,7 +661,7 @@ function clearTemplateCaches(key) {
 
 // DEV: is the node arg unecessary?
 function render(key, node, depth = 0, domMutations = []) {
-  currentKey = key;
+  keyStack.push(key);
 
   let template;
   if (isTemplate(node)) {
@@ -907,6 +913,7 @@ function render(key, node, depth = 0, domMutations = []) {
   }
 
   templatesByKey[key] = template;
+  keyStack.pop();
 }
 
 // DEV: what about reflection?
@@ -956,10 +963,10 @@ class ProxyHandler {
       proxied = value;
     }
 
-    if (this.$isLive && currentKey) {
+    if (this.$isLive && getCurrentKey()) {
       console.log("[get] it's alive!");
 
-      const signalMap = (signalMapsByKey[currentKey] ||= new Map());
+      const signalMap = (signalMapsByKey[getCurrentKey()] ||= new Map());
       signalMap.set(
         this.#signalSymbol,
         signalMap.get(this.#signalSymbol) || [],
@@ -992,7 +999,8 @@ class ProxyHandler {
       Object.entries(signalMapsByKey).forEach(([key, map]) => {
         const paths = map.get(this.#signalSymbol);
         // DEV: actually, this is backwards?
-        if (paths.some((path) => path.startsWith(this.$path))) {
+        // if (paths.some((path) => path.startsWith(this.$path))) {
+        if (paths.some((path) => this.$path.startsWith(path))) {
           render(key, componentsByKey[key]);
         }
       });
@@ -1010,8 +1018,8 @@ const signalMapsByKey = {};
 const signalInitsByKey = {};
 
 function signal(initialValue) {
-  if (currentKey) {
-    return (signalInitsByKey[currentKey] ||= new Proxy(
+  if (getCurrentKey()) {
+    return (signalInitsByKey[getCurrentKey()] ||= new Proxy(
       { $val: initialValue },
       new ProxyHandler(Symbol(), { isRoot: true, isLive: true }),
     ));
@@ -1094,7 +1102,13 @@ function TodoList() {
 // - actually, still might be a bad idea, but you could return a
 //   modified splice method on arrays
 
+// DEV: index prop is sometimes stale?
+// - weird bug sometimes if you insert items in the middle of the array and then
+//   try to move one of the later items up
+// - seems that items aren't properly re-rendering when their index prop changes
 function Todo({ id, index }) {
+  console.log("rendering", id);
+
   return html`
     <div>
       <input type="checkbox" />
@@ -1142,23 +1156,21 @@ function Todo({ id, index }) {
 
 TodoList.components = { Todo };
 
-let expanded = false;
+// DEV: looks like render is getting called with templates that have been
+// cleared from the cache?
 
 function Accordion({ title, description }) {
+  const expanded = signal(true);
+
   return html`
     <div>
       <div>
         <h2 style="display: inline">${title}</h2>
-        <button
-          onclick=${() => {
-            expanded = !expanded;
-            render("root.0", Accordion);
-          }}
-        >
-          ${expanded ? "x" : "+"}
+        <button onclick=${() => (expanded.$val = !expanded.$val)}>
+          ${expanded.$val ? "x" : "+"}
         </button>
       </div>
-      ${expanded && html`<p>${description}</p>`}
+      ${expanded.$val && html`<p>${description}</p>`}
     </div>
   `;
 }
@@ -1190,7 +1202,7 @@ const App = () => {
 
   return html`<TodoList />`;
 
-  return html`<TextInput />`;
+  // return html`<TextInput />`;
 
   return html`
     <Accordion
