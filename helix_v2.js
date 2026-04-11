@@ -808,7 +808,7 @@ function render(key, node, depth = 0, domMutations = []) {
 
               hydrate(result);
             });
-          } else if (item.hash !== prevItem.hash) {
+          } else if (item.interpolations.length) {
             render(itemKey, item, depth + 1, domMutations);
           }
         });
@@ -918,12 +918,6 @@ function render(key, node, depth = 0, domMutations = []) {
 
 // DEV: what about reflection?
 
-// DEV: hmm, current key is set while nothing is being rendered?
-// - you need a stack?
-
-// DEV: could weird behavior you were seeing be due to holes in the array from
-// out of bounds operations?
-
 class ProxyHandler {
   #signalSymbol;
   $isRoot = false;
@@ -998,8 +992,7 @@ class ProxyHandler {
 
       Object.entries(signalMapsByKey).forEach(([key, map]) => {
         const paths = map.get(this.#signalSymbol);
-        // DEV: actually, this is backwards?
-        // if (paths.some((path) => path.startsWith(this.$path))) {
+
         if (paths.some((path) => this.$path.startsWith(path))) {
           render(key, componentsByKey[key]);
         }
@@ -1052,16 +1045,6 @@ const todos = signal(
   })),
 );
 
-// DEV: complicated topic, but I'm wondering if changes on lower levels paths
-// should always trigger re-renders at higher level paths to avoid child
-// comoponents hanging around with stale values
-// - imagining if another component updated todo[3], if we don't do this, then
-//   the Todo component will never actually re-render
-// - would this automatically ensure the cool splice behavior you were thinking of?
-// - does it exacerbate the zombie child problem?
-
-// DEV: possible to get into a weird state where some items can't be deleted
-
 function TodoList() {
   return html`
     <div>
@@ -1074,26 +1057,14 @@ function TodoList() {
         +
       </button>
     </div>
-    ${
-      // DEV: wait a sec, is this the liveness check in action?
-      // - yes
-      // - lots to think about here, I wonder if this has been discussed in the
-      //   Preact community
-      // - does this mean that props passed to array items might be stale?
-      // - no?
-      todos.$val.map(
-        (todo, i) =>
-          html(todo.id)`
+    ${todos.$val.map(
+      (todo, i) =>
+        html(todo.id)`
             <Todo id=${todo.id} index=${i} />
           `,
-      )
-    }
+    )}
   `;
 }
-
-// DEV: you might see some interesting behavior when splicing an array
-// if you pass the signal to each array item
-// - zombie child problem?
 
 // DEV: would it make sense to count methods like splice as mutations
 // and trigger a render?
@@ -1102,10 +1073,6 @@ function TodoList() {
 // - actually, still might be a bad idea, but you could return a
 //   modified splice method on arrays
 
-// DEV: index prop is sometimes stale?
-// - weird bug sometimes if you insert items in the middle of the array and then
-//   try to move one of the later items up
-// - seems that items aren't properly re-rendering when their index prop changes
 function Todo({ id, index }) {
   console.log("rendering", id);
 
@@ -1156,9 +1123,6 @@ function Todo({ id, index }) {
 
 TodoList.components = { Todo };
 
-// DEV: looks like render is getting called with templates that have been
-// cleared from the cache?
-
 function Accordion({ title, description }) {
   const expanded = signal(true);
 
@@ -1198,7 +1162,7 @@ function TextInput() {
 }
 
 const App = () => {
-  return html`<Counter />`;
+  // return html`<Counter />`;
 
   return html`<TodoList />`;
 
