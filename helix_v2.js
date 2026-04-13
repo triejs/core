@@ -951,7 +951,7 @@ class ProxyHandler {
         proxied = new Proxy(value, new ProxyHandler(this.#signalSymbol));
       }
 
-      proxied.$isLive = this.isLive;
+      proxied.$isLive = this.$isLive; // DEV: whoops
       proxied.$path = this.$path + "." + prop;
     } else {
       proxied = value;
@@ -972,6 +972,34 @@ class ProxyHandler {
       }
     }
 
+    // if (prop === "splice") {
+    //   console.log({ isLive: this.$isLive });
+    //   console.log({ array: target });
+    // }
+
+    if (this.$isLive && Array.isArray(target) && prop === "splice") {
+      console.log("returning special splice");
+
+      const ownPath = this.$path;
+      const symbol = this.#signalSymbol;
+
+      // DEV: arrow vs array?
+      // - reflect?
+      return function $splice(...args) {
+        console.log("calling special splice...");
+
+        target.splice(...args);
+
+        // DEV, hmm
+        Object.entries(signalMapsByKey).forEach(([key, map]) => {
+          const paths = map.get(symbol);
+          if (paths.some((path) => ownPath.startsWith(path))) {
+            render(key, componentsByKey[key]);
+          }
+        });
+      };
+    }
+
     if (!this.$isRoot) {
       this.$isLive = false;
     }
@@ -990,9 +1018,10 @@ class ProxyHandler {
     if (this.$isLive) {
       console.log("[set] it's alive!");
 
+      // DEV: dry this up?
+      // - use a synchronous event emitter?
       Object.entries(signalMapsByKey).forEach(([key, map]) => {
         const paths = map.get(this.#signalSymbol);
-
         if (paths.some((path) => this.$path.startsWith(path))) {
           render(key, componentsByKey[key]);
         }
@@ -1087,7 +1116,7 @@ function Todo({ id, index }) {
 
             todos.$val.splice(index, 1);
             todos.$val.splice(index - 1, 0, todo);
-            todos.$val = todos.$val;
+            // todos.$val = todos.$val;
           }
         }}
       >
@@ -1096,11 +1125,19 @@ function Todo({ id, index }) {
       <button
         onClick=${() => {
           if (index < todos.$val.length - 1) {
+            // const todo = todos.$val[index];
+
+            // todos.$val.splice(index, 1);
+            // todos.$val.splice(index + 1, 0, todo);
+            // todos.$val = todos.$val;
+
+            // DEV: why doesn't this work anymore?
+            // - seems that event listeners are not being properly attached?
+
             const todo = todos.$val[index];
 
             todos.$val.splice(index, 1);
             todos.$val.splice(index + 1, 0, todo);
-            todos.$val = todos.$val;
           }
         }}
       >
@@ -1108,15 +1145,13 @@ function Todo({ id, index }) {
       </button>
       <button
         onClick=${() =>
-          (todos.$val = todos.$val.toSpliced(index + 1, 0, {
+          todos.$val.splice(index + 1, 0, {
             id: todoId(),
-          }))}
+          })}
       >
         +
       </button>
-      <button onClick=${() => (todos.$val = todos.$val.toSpliced(index, 1))}>
-        -
-      </button>
+      <button onClick=${() => todos.$val.splice(index, 1)}>-</button>
     </div>
   `;
 }
