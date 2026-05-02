@@ -1,4 +1,4 @@
-import { html, signal } from "./helix_v2.js";
+import { html, signal } from "./helix.js";
 
 export function Counter() {
   const $count = signal(0);
