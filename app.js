@@ -1,5 +1,7 @@
 import { html, signal } from "./helix.js";
 
+export * as TodoList from "./todo-list.js";
+
 export function Counter() {
   const $count = signal(0);
 

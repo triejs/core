@@ -90,12 +90,11 @@ function mergePhrases(phrases) {
   }, []);
 }
 
-function populateScopes(scope) {
+function resolveComponents(module) {
   const templates = [];
   const components = {};
-  const childScopes = [];
 
-  Object.entries(scope).forEach(([name, value]) => {
+  Object.entries(module).forEach(([name, value]) => {
     if (isTemplate(value)) {
       templates.push(value);
     } else if (typeof value === "function" && /[A-Z]/.test(name)) {
@@ -107,25 +106,26 @@ function populateScopes(scope) {
       value[Symbol.toStringTag] === "Module" &&
       typeof value[name] === "function"
     ) {
-      components[name] = value;
-      childScopes.push(value);
+      components[name] = value[name];
+      components[name].components = resolveComponents(value);
     }
   });
 
+  // TODO: re-exported templates may end up with the wrong components
   templates.forEach((template) => (template.components = components));
   Object.values(components).forEach(
-    (component) => (component.components = components),
+    (component) => (component.components ||= components),
   );
 
-  childScopes.forEach(populateScopes);
+  return components;
 }
 
 export function createRoot(domNode, scope) {
-  populateScopes(scope);
+  const components = resolveComponents(scope);
 
   return {
     render(template) {
-      template.components = scope;
+      template.components = components;
 
       const result = renderToString("root", template);
       domNode.innerHTML = result.html;
