@@ -135,6 +135,22 @@ export function createRoot(domNode, scope) {
   };
 }
 
+const codeLookup = {
+  "&": "&amp;",
+  "<": "&lt;",
+  '"': "&quot;",
+  "'": "&#39;",
+  ">": "&gt;",
+};
+
+function escapeHtml(text) {
+  if (typeof text !== "string") {
+    return text;
+  }
+
+  return text.replace(/&|<|"|'|>/g, (match) => codeLookup[match]);
+}
+
 export function html(htmlStringsOrConfig, ...interpolations) {
   if (Array.isArray(htmlStringsOrConfig)) {
     const strings = htmlStringsOrConfig;
@@ -178,8 +194,6 @@ function getTemplateBuilder(key, defaultHtmlStrings, ...defaultInterpolations) {
 
 // TODO: trim inter-element whitespace
 
-// TODO: more work here and in a renderToString to make sure components are
-// passed around properly
 function parseTemplateInPlace(template) {
   let isOpeningTag = false;
   let isClosingTag = false;
@@ -505,9 +519,8 @@ function renderToString(key, node, result = { html: "", listenersByKey: {} }) {
   }
 
   if (isPrimitive(template)) {
-    // TODO: primitives need to be escaped at some point
     if (canRenderPrimitive(template)) {
-      result.html += template;
+      result.html += escapeHtml(template);
     }
 
     keyStack.pop();
@@ -553,10 +566,7 @@ function renderToString(key, node, result = { html: "", listenersByKey: {} }) {
               result.html.length - attribute.name.length - 1,
             );
           } else {
-            result.html += `"${
-              // TODO: you may need to escape this
-              value
-            }"`;
+            result.html += `"${escapeHtml(value)}"`;
           }
         }
         break;
@@ -569,8 +579,7 @@ function renderToString(key, node, result = { html: "", listenersByKey: {} }) {
 
           if (isPrimitive(value)) {
             if (canRenderPrimitive(value)) {
-              // TODO: you also need to escape this
-              result.html += value;
+              result.html += escapeHtml(value);
             }
           } else if (isTemplate(value)) {
             value.components ||= template.components;
@@ -779,8 +788,13 @@ function render(key, node, depth = 0, domMutations = []) {
     clearTemplate(key);
 
     domMutations.push(() =>
+      // No need to escape since setHtml with mode "text" calls createTextNode
       setHtml(key, canRenderPrimitive(template) ? template : "", "text"),
     );
+
+    if (depth === 0 && domMutations.length) {
+      domMutations.forEach((mutation) => mutation());
+    }
 
     keyStack.pop();
     return;
@@ -802,6 +816,11 @@ function render(key, node, depth = 0, domMutations = []) {
       hydrate(result);
     });
 
+    if (depth === 0 && domMutations.length) {
+      domMutations.forEach((mutation) => mutation());
+    }
+
+    templatesByKey[key] = template;
     keyStack.pop();
     return;
   }
@@ -818,6 +837,8 @@ function render(key, node, depth = 0, domMutations = []) {
         clearAll(slotKey);
 
         domMutations.push(() =>
+          // No need to escape since setHtml with mode "text" calls
+          // createTextNode
           setHtml(slotKey, canRenderPrimitive(value) ? value : "", "text"),
         );
       }
@@ -941,7 +962,6 @@ function render(key, node, depth = 0, domMutations = []) {
   });
 
   template.attributes.forEach((attr, i) => {
-    // TODO: you may need to escape this
     const attrValue = template.interpolations[attr.interpolationIndex];
     const prevAttrValue =
       templatesByKey[key].interpolations[
