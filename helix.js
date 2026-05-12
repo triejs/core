@@ -883,7 +883,10 @@ function render(key, node, depth = 0, domMutations = []) {
       let renderAll = false;
       if (!Array.isArray(prevValue)) {
         renderAll = true;
-      } else {
+      }
+      // TODO: Shouldn't have to iterate so many times just to figure out if
+      // the order changed
+      else {
         const withoutNew = value.filter((item) =>
           prevValue.some(
             (prevItem) => prevItem.assignedkey === item.assignedkey,
@@ -902,24 +905,26 @@ function render(key, node, depth = 0, domMutations = []) {
 
       if (renderAll) {
         clearAll(slotKey);
-        domMutations.push(() => setHtml(slotKey, ""));
 
-        value.toReversed().forEach((item) => {
-          item.components ||= template.components;
+        const result = value.reduce(
+          (result, item) => {
+            item.components ||= template.components;
 
-          const itemKey = slotKey + "." + item.assignedkey;
-          const result = renderToString(itemKey, item);
+            const itemKey = slotKey + "." + item.assignedkey;
+            const currentResult = renderToString(itemKey, item, {
+              html: result.html + `<!-- ${itemKey} -->`,
+              listenersByKey: result.listenersByKey,
+            });
 
-          // TODO: One big dom update would be faster than a bunch of little
-          // ones
-          domMutations.push(() => {
-            setHtml(
-              slotKey,
-              `<!-- ${itemKey} -->` + result.html + `<!-- ${itemKey} -->`,
-              "insert",
-            );
-            hydrate(itemKey, result);
-          });
+            currentResult.html += `<!-- ${itemKey} -->`;
+            return currentResult;
+          },
+          { html: "", listenersByKey: {} },
+        );
+
+        domMutations.push(() => {
+          setHtml(slotKey, result.html);
+          hydrate(slotKey, result);
         });
       } else {
         // Removed items
