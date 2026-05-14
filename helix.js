@@ -883,21 +883,22 @@ function render(key, node, depth = 0, domMutations = []) {
       let renderAll = false;
       if (!Array.isArray(prevValue)) {
         renderAll = true;
-      }
-      // TODO: Shouldn't have to iterate so many times just to figure out if
-      // the order changed
-      else {
-        const withoutNew = value.filter((item) =>
-          prevValue.some(
-            (prevItem) => prevItem.assignedkey === item.assignedkey,
-          ),
+      } else {
+        const prevIndexByKey = Object.fromEntries(
+          prevValue.map((prevItem, i) => [prevItem.assignedkey, i]),
         );
-        const prevWithoutRemoved = prevValue.filter((prevItem) =>
-          value.some((item) => item.assignedkey === prevItem.assignedkey),
-        );
-        const orderChanged = !withoutNew.every(
-          (item, i) => prevWithoutRemoved[i].assignedkey === item.assignedkey,
-        );
+
+        let maxIndex = 0;
+        const orderChanged = value.some((item) => {
+          const prevIndex = prevIndexByKey[item.assignedkey];
+          if (typeof prevIndex === "number") {
+            if (prevIndex < maxIndex) {
+              return true;
+            } else {
+              maxIndex = prevIndex;
+            }
+          }
+        });
 
         orderChanged && debug("Array order changed");
         renderAll = orderChanged;
