@@ -1,6 +1,6 @@
-# Helix
+# Trie
 
-Helix is a lightweight JSX/React alternative that does not require a compiler,
+Trie is a lightweight JSX/React alternative that does not require a compiler,
 can run directly in the browser, and is intended to be used without a bundler.
 
 > ⚠️ Warning
@@ -13,7 +13,7 @@ can run directly in the browser, and is intended to be used without a bundler.
 Create a new directory and in `app.js` add:
 
 ```javascript
-import { html, signal } from "helix";
+import { html, signal } from "trie";
 
 export function Counter() {
   const $count = signal(0);
@@ -35,12 +35,12 @@ In `index.html` add:
     <script type="importmap">
       {
         "imports": {
-          "helix": "https://cdn.jsdelivr.net/gh/Esarhaddon/helix@master/helix.min.js"
+          "trie": "https://cdn.jsdelivr.net/gh/triejs/core/src/trie.min.js"
         }
       }
     </script>
     <script type="module">
-      import { createRoot, html } from "helix";
+      import { createRoot, html } from "trie";
       import * as app from "./app.js";
 
       const root = createRoot(document.getElementById("root"), app);

@@ -3,12 +3,12 @@
     <script type="importmap">
       {
         "imports": {
-          "helix": "https://cdn.jsdelivr.net/gh/Esarhaddon/helix@master/helix.min.js"
+          "trie": "https://cdn.jsdelivr.net/gh/triejs/core/src/trie.min.js"
         }
       }
     </script>
     <script type="module">
-      import { createRoot, html } from "helix";
+      import { createRoot, html } from "trie";
       import * as app from "./app.js";
 
       const root = createRoot(document.getElementById("root"), app);

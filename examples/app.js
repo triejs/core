@@ -1,4 +1,4 @@
-import { html, signal } from "helix";
+import { html, signal } from "trie";
 
 export * from "./todo-list.js";
 
