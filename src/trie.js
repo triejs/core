@@ -792,7 +792,10 @@ function render(key, node, depth = 0, domMutations = []) {
 
     delete accessByKey[key];
     delete enumeratedAccessByKey[key];
+
+    signalComponentIndex = 0;
     template = node(propsByKey[key] || {});
+    signalComponentIndex = 0;
   }
 
   if (isPrimitive(template)) {
@@ -1230,12 +1233,13 @@ class ProxyHandler {
 
 const signalInitsByKey = {};
 
+let signalComponentIndex = 0;
+
 export function signal(initialValue) {
   if (getCurrentKey()) {
-    return (signalInitsByKey[getCurrentKey()] ||= new Proxy(
-      { val: initialValue },
-      new ProxyHandler(Symbol(), "[root]"),
-    ));
+    signalInitsByKey[getCurrentKey()] ||= {};
+    return (signalInitsByKey[getCurrentKey()][signalComponentIndex++] ||=
+      new Proxy({ val: initialValue }, new ProxyHandler(Symbol(), "[root]")));
   } else {
     return new Proxy(
       { val: initialValue },
