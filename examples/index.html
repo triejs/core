@@ -4,7 +4,7 @@
     <script type="importmap">
       {
         "imports": {
-          "trie": "https://cdn.jsdelivr.net/gh/triejs/core/src/trie.min.js"
+          "trie": "../src/trie.js"
         }
       }
     </script>
@@ -19,4 +19,12 @@
   <body>
     <div id="root">loading...</div>
   </body>
+  <script>
+    document.write(
+      '<script src="http://' +
+        (location.host || "localhost").split(":")[0] +
+        ':35729/livereload.js"></' +
+        "script>",
+    );
+  </script>
 </html>

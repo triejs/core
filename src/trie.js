@@ -494,6 +494,15 @@ function parseTemplateInPlace(template) {
   template.parsedHtmlPhrases = mergePhrases(template.parsedHtmlPhrases);
 }
 
+// DEV: a simple way around some of your difficulties might be to impliment a renderedKeys array
+// that holds the keys of all the comoponents that were rendered during the last render cycle
+// - you would reset it whenever render() was called with a depth of 0
+
+// Seems like keyStack might only be needed for the render methods now?
+// - you will still need this or something like it so that the runtime knows when
+//   we're inside a comoponent call vs a render method call
+// - you'll need this if you decide to ban declarations inside map and flatMap on
+//   signals while rendering
 const keyStack = [];
 function getCurrentKey() {
   return keyStack.at(-1);
@@ -501,10 +510,14 @@ function getCurrentKey() {
 
 const templatesByKey = {};
 const componentsByKey = {};
+const renderMethodsByKey = {};
 
 let propsByKey = {};
 
+// DEV: -> mount, mountToString ?
 function renderToString(key, node, result = { html: "", listenersByKey: {} }) {
+  // DEV: is the keyStack only necessary if we're calling the render method?
+  // keyStack.push and pop should maybe go inside the conditional
   keyStack.push(key);
 
   let template;
@@ -512,7 +525,13 @@ function renderToString(key, node, result = { html: "", listenersByKey: {} }) {
     template = node;
   } else {
     componentsByKey[key] = node;
-    template = node(propsByKey[key] || {});
+
+    signalComponentIndex = 0;
+    const renderMethod = node(propsByKey[key] || {});
+    signalComponentIndex = 0;
+
+    renderMethodsByKey[key] = renderMethod;
+    template = renderMethod();
   }
 
   if (isPrimitive(template)) {
@@ -788,14 +807,19 @@ function render(key, node, depth = 0, domMutations = []) {
   if (isTemplate(node)) {
     template = node;
   } else {
-    componentsByKey[key] = node;
+    // DEV: hmm, no need here to handle the case where a component changes
+    // between renders as that will always result in a call to
+    // renderToString?
+    // componentsByKey[key] = node;
 
     delete accessByKey[key];
     delete enumeratedAccessByKey[key];
 
-    signalComponentIndex = 0;
-    template = node(propsByKey[key] || {});
-    signalComponentIndex = 0;
+    template = renderMethodsByKey[key]();
+
+    // signalComponentIndex = 0;
+    // template = node(propsByKey[key] || {});
+    // signalComponentIndex = 0;
   }
 
   if (isPrimitive(template)) {
@@ -1082,6 +1106,10 @@ function render(key, node, depth = 0, domMutations = []) {
 
   if (depth === 0 && domMutations.length) {
     domMutations.forEach((mutation) => mutation());
+
+    // DEV: this is probably where you want to go through tasks
+    // - hmm, this is getting kinda tricky
+    // - do you need a tasks array like you have a dom mutations array?
   }
 
   templatesByKey[key] = template;
@@ -1153,15 +1181,13 @@ class ProxyHandler {
       proxied = value;
     }
 
-    if (getCurrentKey()) {
-      if (
-        Array.isArray(target) &&
-        (typeof value === "function" || prop === "length")
-      ) {
-        subscribe(enumeratedAccessByKey, this.#signalId, this.path);
-      } else {
-        subscribe(accessByKey, this.#signalId, this.path + "." + prop);
-      }
+    if (
+      Array.isArray(target) &&
+      (typeof value === "function" || prop === "length")
+    ) {
+      subscribe(enumeratedAccessByKey, this.#signalId, this.path);
+    } else {
+      subscribe(accessByKey, this.#signalId, this.path + "." + prop);
     }
 
     if (
@@ -1231,11 +1257,16 @@ class ProxyHandler {
   }
 }
 
+// DEV: -> signalsByKey
 const signalInitsByKey = {};
 
 let signalComponentIndex = 0;
 
+// DEV: calling signal with another signal should call structuredClone on the
+// signal passed in
+
 export function signal(initialValue) {
+  // DEV: hmm, this first branch might not be necessary anymore
   if (getCurrentKey()) {
     signalInitsByKey[getCurrentKey()] ||= {};
     return (signalInitsByKey[getCurrentKey()][signalComponentIndex++] ||=

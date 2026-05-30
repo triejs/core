@@ -16,7 +16,7 @@ export function TodoList() {
 
   const $todos = signal(initialTodos);
 
-  return html`
+  return () => html`
     <div>
       <h1 style="display: inline">Todos</h1>
       <button
@@ -29,20 +29,23 @@ export function TodoList() {
       <button onClick=${() => $todos.val.reverse()}>↑↓</button>
     </div>
     ${$todos.val.map(
-      (todo, i) =>
+      // DEV: might be difficult to prevent declarations here
+      (todo) =>
         html(todo.id)`
-          <Todo id=${todo.id} $todos=${$todos} index=${i} />
+          <Todo id=${todo.id} $todos=${$todos} />
         `,
     )}
   `;
 }
 
-export function Todo({ id, $todos, index }) {
-  console.log(`[Todo ${id}] rendering`);
+export function Todo(p) {
+  console.log(`[Todo ${p.id}] rendering`);
 
-  const $todo = $todos.val[index];
+  // DEV: this is still going to cause perf issues
+  // - a lazy computed fn could help with this
+  const $todo = p.$todos.val.find((todo) => todo.id === p.id);
 
-  return html`
+  return () => html`
     <div>
       <input
         type="checkbox"
@@ -51,21 +54,24 @@ export function Todo({ id, $todos, index }) {
       />
       <input
         type="text"
-        placeholder=${`To do [${id}]`}
+        placeholder=${`To do [${p.id}]`}
         value=${$todo.text}
         onInput=${(e) => ($todo.text = e.target.value)}
       />
       <button
-        onClick=${() =>
-          $todos.val.splice(index + 1, 0, {
+        onClick=${() => {
+          const index = p.$todos.val.findIndex((todo) => todo.id === p.id);
+
+          p.$todos.val.splice(index + 1, 0, {
             id: todoId(),
             text: "",
             checked: false,
-          })}
+          });
+        }}
       >
         +
       </button>
-      <button onClick=${() => $todos.val.splice(index, 1)}>-</button>
+      <button onClick=${() => p.$todos.val.splice(index, 1)}>-</button>
     </div>
   `;
 }

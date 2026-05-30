@@ -5,7 +5,9 @@ export * from "./todo-list.js";
 export function Counter() {
   const $count = signal(0);
 
-  return html`
+  console.log("[Counter] rendering");
+
+  return () => html`
     <div>${$count.val}</div>
     <button onclick=${() => $count.val++}>↑</button>
     <button onclick=${() => $count.val--}>↓</button>
