@@ -53,5 +53,4 @@ In `index.html` add:
 </html>
 ```
 
-To launch, cd into your new directory and run `npx serve` or `npx live-server`
-or similar.
+To launch, cd into your new directory and run `npx serve` or similar.
